@@ -54,6 +54,7 @@ class InputPanel(ttk.LabelFrame):
         self._suspend_change_notifications = False
         self._nozzle_controls_enabled = True
         self._editable = True
+        self._locked_current_design_fields: set[str] = set()
         self._flow_case_notice_var = tk.StringVar(value="")
         self._performance_preview_result: PerformancePreviewResult | None = None
         self._changed_performance_preview_keys: set[str] = set()
@@ -72,13 +73,24 @@ class InputPanel(ttk.LabelFrame):
             "thrust_estimate": tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT),
             "chamber_pressure": tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT),
             "thrust_deviation": tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT),
+            "bell_start_angle": tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT),
+            "exit_angle": tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT),
         }
+        self._performance_preview_source_var = tk.StringVar(
+            value=f"Source/method: {self._PREVIEW_UNAVAILABLE_TEXT}"
+        )
+        self._divergent_loss_factor_var = tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT)
+        self._divergent_loss_percent_var = tk.StringVar(value=self._PREVIEW_UNAVAILABLE_TEXT)
+        self._divergent_loss_source_var = tk.StringVar(value="Geometry divergent loss not committed yet.")
         self._performance_preview_value_labels: dict[str, ttk.Label] = {}
         self._derived_total_mass_flow_kg_per_s: float | None = None
         self._derived_mixture_ratio: float | None = None
         self._combustion_eta_entry: ttk.Entry | None = None
         self._combustion_loss_label: ttk.Label | None = None
         self._combustion_warning_label: ttk.Label | None = None
+        self._geometry_lock_widgets: dict[str, tk.Widget] = {}
+        self._manual_nozzle_length_apply_button: ttk.Button | None = None
+        self._divergent_loss_check: ttk.Checkbutton | None = None
         self._current_design_value_labels: list[ttk.Label] = []
         self._current_design_value_definitions = (
             (
@@ -96,6 +108,10 @@ class InputPanel(ttk.LabelFrame):
             (
                 ("c*_design", "c_star_design"),
                 ("Cf_design", "cf_design"),
+            ),
+            (
+                ("Bell start angle θ_n", "bell_start_angle"),
+                ("Exit angle θ_e", "exit_angle"),
             ),
             (
                 ("Deviation", "thrust_deviation"),
@@ -123,6 +139,7 @@ class InputPanel(ttk.LabelFrame):
         self._combustion_eta_var = tk.StringVar(value="0.95")
         self._combustion_loss_var = tk.StringVar(value="Assumed combustion loss: 5.0 %")
         self._combustion_warning_var = tk.StringVar(value="")
+        self._use_divergent_loss_var = tk.BooleanVar(value=False)
         self._variables["expansion_ratio"].trace_add("write", self._sync_current_expansion_ratio)
         self._variables["contour_family"].trace_add("write", self._sync_bell_subtype_visibility)
         for key in (
@@ -143,6 +160,7 @@ class InputPanel(ttk.LabelFrame):
             self._variables[key].trace_add("write", self._handle_input_changed)
         self._use_combustion_efficiency_var.trace_add("write", self._handle_combustion_efficiency_changed)
         self._combustion_eta_var.trace_add("write", self._handle_combustion_efficiency_changed)
+        self._use_divergent_loss_var.trace_add("write", self._handle_divergent_loss_changed)
         self._ensure_styles()
         self._build_widgets()
 
@@ -371,6 +389,82 @@ class InputPanel(ttk.LabelFrame):
                 )
                 right_value_label.grid(row=row_index, column=3, sticky="w", pady=2)
                 self._performance_preview_value_labels[right_key] = right_value_label
+
+            ttk.Label(
+                performance_frame,
+                textvariable=self._performance_preview_source_var,
+                wraplength=320,
+                justify="left",
+                style="Hint.TLabel",
+            ).grid(
+                row=len(self._current_design_value_definitions),
+                column=0,
+                columnspan=4,
+                sticky="ew",
+                pady=(8, 0),
+            )
+            divergent_loss_check = ttk.Checkbutton(
+                performance_frame,
+                text="Use divergent loss from Geometry",
+                variable=self._use_divergent_loss_var,
+            )
+            divergent_loss_check.grid(
+                row=len(self._current_design_value_definitions) + 1,
+                column=0,
+                columnspan=4,
+                sticky="w",
+                pady=(8, 0),
+            )
+            self._divergent_loss_check = divergent_loss_check
+            self._editable_widgets.append(divergent_loss_check)
+
+            ttk.Label(performance_frame, text="Divergent loss factor").grid(
+                row=len(self._current_design_value_definitions) + 2,
+                column=0,
+                sticky="w",
+                padx=(0, 6),
+                pady=2,
+            )
+            ttk.Label(
+                performance_frame,
+                textvariable=self._divergent_loss_factor_var,
+                style="PreviewValue.TLabel",
+            ).grid(
+                row=len(self._current_design_value_definitions) + 2,
+                column=1,
+                sticky="w",
+                pady=2,
+            )
+            ttk.Label(performance_frame, text="Divergent loss").grid(
+                row=len(self._current_design_value_definitions) + 2,
+                column=2,
+                sticky="w",
+                padx=(16, 6),
+                pady=2,
+            )
+            ttk.Label(
+                performance_frame,
+                textvariable=self._divergent_loss_percent_var,
+                style="PreviewValue.TLabel",
+            ).grid(
+                row=len(self._current_design_value_definitions) + 2,
+                column=3,
+                sticky="w",
+                pady=2,
+            )
+            ttk.Label(
+                performance_frame,
+                textvariable=self._divergent_loss_source_var,
+                wraplength=320,
+                justify="left",
+                style="Hint.TLabel",
+            ).grid(
+                row=len(self._current_design_value_definitions) + 3,
+                column=0,
+                columnspan=4,
+                sticky="ew",
+                pady=(4, 0),
+            )
             next_row += 1
 
         geometry_frame = ttk.LabelFrame(self, text="Nozzle and Chamber Inputs", padding=10)
@@ -424,6 +518,7 @@ class InputPanel(ttk.LabelFrame):
         )
         self._nozzle_control_widgets.append(expansion_entry)
         self._editable_widgets.append(expansion_entry)
+        self._geometry_lock_widgets["expansion_ratio"] = expansion_entry
 
         ttk.Label(geometry_frame, text="Current eps [-]").grid(
             row=3,
@@ -467,6 +562,7 @@ class InputPanel(ttk.LabelFrame):
             pady=4,
         )
         self._editable_widgets.append(contraction_entry)
+        self._geometry_lock_widgets["contraction_ratio"] = contraction_entry
 
         self._field_labels["characteristic_length"] = ttk.Label(geometry_frame)
         self._field_labels["characteristic_length"].grid(
@@ -484,6 +580,7 @@ class InputPanel(ttk.LabelFrame):
             pady=4,
         )
         self._editable_widgets.append(characteristic_length_entry)
+        self._geometry_lock_widgets["characteristic_length"] = characteristic_length_entry
 
         self._field_labels["manual_nozzle_length"] = ttk.Label(geometry_frame)
         self._field_labels["manual_nozzle_length"].grid(
@@ -504,6 +601,7 @@ class InputPanel(ttk.LabelFrame):
         )
         self._nozzle_control_widgets.append(manual_length_entry)
         self._editable_widgets.append(manual_length_entry)
+        self._geometry_lock_widgets["manual_nozzle_length"] = manual_length_entry
         manual_length_button = ttk.Button(
             length_row,
             text="Apply length",
@@ -512,6 +610,7 @@ class InputPanel(ttk.LabelFrame):
         manual_length_button.grid(row=0, column=1, padx=(8, 0))
         self._nozzle_control_widgets.append(manual_length_button)
         self._editable_widgets.append(manual_length_button)
+        self._manual_nozzle_length_apply_button = manual_length_button
 
         ttk.Label(
             geometry_frame,
@@ -640,6 +739,8 @@ class InputPanel(ttk.LabelFrame):
         self._variables["optimal_expansion_ratio_display"].set("pending calculation")
         self._sync_bell_subtype_visibility()
         self._suspend_change_notifications = False
+        self._apply_current_design_field_locks()
+        self._refresh_divergent_loss_display()
 
     def set_editable(self, editable: bool) -> None:
         """Enable or disable editing across the baseline input form."""
@@ -655,6 +756,52 @@ class InputPanel(ttk.LabelFrame):
             else:
                 widget.configure(state="normal" if editable else "disabled")
         self._set_nozzle_controls_enabled(self._nozzle_controls_enabled)
+        self._apply_current_design_field_locks()
+        self._refresh_divergent_loss_display()
+
+    def set_current_design_field_locks(self, locked_fields: set[str]) -> None:
+        """Lock specific Current Design geometry fields after Geometry-tab commits."""
+
+        self._locked_current_design_fields = set(locked_fields)
+        self._apply_current_design_field_locks()
+
+    def set_committed_divergent_loss(
+        self,
+        *,
+        divergent_loss_factor: float | None,
+        source_text: str | None,
+    ) -> None:
+        """Store a Geometry-committed divergent loss for Current Design preview use."""
+
+        if divergent_loss_factor is None:
+            self._divergent_loss_factor_var.set(self._PREVIEW_UNAVAILABLE_TEXT)
+            self._divergent_loss_percent_var.set(self._PREVIEW_UNAVAILABLE_TEXT)
+            self._divergent_loss_source_var.set("Geometry divergent loss not committed yet.")
+            self._use_divergent_loss_var.set(False)
+            self._refresh_divergent_loss_display()
+            return
+
+        self._divergent_loss_factor_var.set(f"{divergent_loss_factor:.4f}")
+        self._divergent_loss_percent_var.set(f"{(1.0 - divergent_loss_factor) * 100.0:.2f} %")
+        self._divergent_loss_source_var.set(
+            "Source/method: "
+            + (source_text or "Geometry nozzle preview")
+        )
+        self._refresh_divergent_loss_display()
+
+    def clear_committed_divergent_loss(self) -> None:
+        """Clear the Geometry-committed divergent loss in Current Design."""
+
+        self.set_committed_divergent_loss(divergent_loss_factor=None, source_text=None)
+
+    def get_divergent_loss_enabled(self) -> bool:
+        """Return whether the committed Geometry divergent loss should be used."""
+
+        if not self._show_current_design_features:
+            return False
+        if self._divergent_loss_factor_var.get() == self._PREVIEW_UNAVAILABLE_TEXT:
+            return False
+        return self._use_divergent_loss_var.get()
 
     def set_mixture_ratio(self, mixture_ratio: float) -> None:
         """Update only the O/F ratio field, for example from the O/F sweep plot."""
@@ -901,6 +1048,10 @@ class InputPanel(ttk.LabelFrame):
         self._refresh_combustion_efficiency_display()
         self._handle_input_changed()
 
+    def _handle_divergent_loss_changed(self, *_args: object) -> None:
+        self._refresh_divergent_loss_display()
+        self._handle_input_changed()
+
     def _set_nozzle_controls_enabled(self, enabled: bool) -> None:
         self._nozzle_controls_enabled = enabled
         state = "readonly" if enabled and self._editable else "disabled"
@@ -912,6 +1063,7 @@ class InputPanel(ttk.LabelFrame):
             else:
                 widget.configure(state="normal" if enabled and self._editable else "disabled")
         self._sync_bell_subtype_visibility()
+        self._apply_current_design_field_locks()
 
     def _handle_input_changed(self, *_args: object) -> None:
         if self._suspend_change_notifications:
@@ -975,6 +1127,49 @@ class InputPanel(ttk.LabelFrame):
         else:
             self._combustion_warning_var.set("")
 
+    def _refresh_divergent_loss_display(self) -> None:
+        if not self._show_current_design_features or self._divergent_loss_check is None:
+            return
+
+        has_committed_value = self._divergent_loss_factor_var.get() != self._PREVIEW_UNAVAILABLE_TEXT
+        if not has_committed_value and self._use_divergent_loss_var.get():
+            self._use_divergent_loss_var.set(False)
+        self._divergent_loss_check.configure(
+            state="normal" if self._editable and has_committed_value else "disabled"
+        )
+
+    def _apply_current_design_field_locks(self) -> None:
+        if not self._show_current_design_features:
+            return
+
+        for key, widget in self._geometry_lock_widgets.items():
+            if key in {"expansion_ratio", "manual_nozzle_length"}:
+                if not self._editable or not self._nozzle_controls_enabled:
+                    widget.configure(state="disabled")
+                elif key in self._locked_current_design_fields:
+                    widget.configure(state="readonly")
+                else:
+                    widget.configure(state="normal")
+                continue
+
+            if not self._editable:
+                widget.configure(state="disabled")
+            elif key in self._locked_current_design_fields:
+                widget.configure(state="readonly")
+            else:
+                widget.configure(state="normal")
+
+        if self._manual_nozzle_length_apply_button is not None:
+            self._manual_nozzle_length_apply_button.configure(
+                state=(
+                    "normal"
+                    if self._editable
+                    and self._nozzle_controls_enabled
+                    and "manual_nozzle_length" not in self._locked_current_design_fields
+                    else "disabled"
+                )
+            )
+
     def _refresh_derived_flow_display(self) -> None:
         total_mass_flow_kg_per_s = self._derived_total_mass_flow_kg_per_s
         mixture_ratio = self._derived_mixture_ratio
@@ -1014,6 +1209,7 @@ class InputPanel(ttk.LabelFrame):
             label = self._performance_preview_value_labels.get(key)
             if label is not None:
                 label.configure(style="PreviewValue.TLabel")
+        self._performance_preview_source_var.set(f"Source/method: {self._PREVIEW_UNAVAILABLE_TEXT}")
 
         preview_result = self._performance_preview_result
         if preview_result is None:
@@ -1046,6 +1242,16 @@ class InputPanel(ttk.LabelFrame):
         self._performance_preview_values["thrust_deviation"].set(
             self._format_preview_percent(preview_result.thrust_deviation_percent)
         )
+        self._performance_preview_values["bell_start_angle"].set(
+            self._format_preview_angle(preview_result.bell_start_angle_deg)
+        )
+        self._performance_preview_values["exit_angle"].set(
+            self._format_preview_angle(preview_result.exit_angle_deg)
+        )
+        self._performance_preview_source_var.set(
+            "Source/method: "
+            + (preview_result.nozzle_angle_source or self._PREVIEW_UNAVAILABLE_TEXT)
+        )
 
         deviation_label = self._performance_preview_value_labels.get("thrust_deviation")
         if deviation_label is not None and preview_result.thrust_deviation_exceeds_threshold:
@@ -1069,6 +1275,11 @@ class InputPanel(ttk.LabelFrame):
         if value is None:
             return self._PREVIEW_UNAVAILABLE_TEXT
         return f"{value:+.2f} %"
+
+    def _format_preview_angle(self, value: float | None) -> str:
+        if value is None:
+            return self._PREVIEW_UNAVAILABLE_TEXT
+        return f"{value:.2f} deg"
 
     def _style_for_eta_cstar_design(self, eta_cstar_design: float) -> str:
         band = eta_cstar_band(eta_cstar_design)
@@ -1105,6 +1316,8 @@ class InputPanel(ttk.LabelFrame):
             "c_star_theoretical": "c_star_theoretical_m_s",
             "c_star_design": "c_star_design_m_s",
             "cf_design": "cf_design",
+            "bell_start_angle": "bell_start_angle_deg",
+            "exit_angle": "exit_angle_deg",
             "thrust_deviation": "thrust_deviation_percent",
         }
         changed_keys: set[str] = set()

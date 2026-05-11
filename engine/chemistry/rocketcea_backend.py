@@ -285,6 +285,25 @@ class RocketCEABackend(ThermochemistryBackend):
             notes=notes,
         )
 
+    def estimate_ambient_matched_expansion_ratio(
+        self,
+        inputs: InputParameters,
+    ) -> float | None:
+        """Return a preliminary ambient-matched expansion ratio from RocketCEA when possible."""
+
+        ensure_valid_input(inputs)
+        pc_psia = inputs.chamber_pressure_pa / PSIA_TO_PA
+        pa_psia = inputs.ambient_pressure_pa / PSIA_TO_PA
+        flags = self._mode_flags(inputs.chemistry_mode)
+        cea = self._build_cea(inputs)
+        return self._optimal_expansion_ratio(
+            cea=cea,
+            pc_psia=pc_psia,
+            pa_psia=pa_psia,
+            inputs=inputs,
+            flags=flags,
+        )
+
     def build_of_sweep(
         self,
         inputs: InputParameters,

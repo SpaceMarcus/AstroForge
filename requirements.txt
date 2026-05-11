@@ -1,4 +1,5 @@
 matplotlib>=3.10
 pytest>=9.0
+pygasflow>=1.4.1
 rocketcea>=1.2.3
 scipy>=1.17

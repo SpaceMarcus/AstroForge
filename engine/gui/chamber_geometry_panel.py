@@ -43,6 +43,9 @@ CHAMBER_MODEL_LABELS = {
 }
 CHAMBER_MODEL_VALUES = {label: mode for mode, label in CHAMBER_MODEL_LABELS.items()}
 
+DEFAULT_THROAT_UPSTREAM_RATIO = 1.5
+DEFAULT_THROAT_DOWNSTREAM_RATIO = 0.382
+
 
 class ChamberGeometryPanel(ttk.LabelFrame):
     """Interactive chamber sandbox with staged L* and epsilon_c selection."""
@@ -59,19 +62,20 @@ class ChamberGeometryPanel(ttk.LabelFrame):
     )
 
     def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master, text="Chamber Geometry", padding=12)
-        self.columnconfigure(0, weight=3)
-        self.columnconfigure(1, weight=2)
-        self.rowconfigure(0, weight=1)
+        super().__init__(master, text="Chamber and Throat Workspace", padding=12)
+        self.columnconfigure(0, weight=1)
 
         self._suspend_notifications = False
         self._apply_lstar_callback: Callable[[], None] | None = None
+        self._apply_eps_callback: Callable[[], None] | None = None
         self._apply_geometry_callback: Callable[[], None] | None = None
         self._stored_state_changed_callback: Callable[[], None] | None = None
+        self._inputs_changed_callback: Callable[[], None] | None = None
         self._current_bundle: ExportBundle | None = None
         self._runtime_inputs: InputParameters | None = None
         self._stored_calculation: StoredChamberGeometryCalculation | None = None
         self._stored_lstar_update: dict[str, object] | None = None
+        self._stored_eps_update: dict[str, object] | None = None
         self._stored_geometry_update: dict[str, object] | None = None
         self._committed_lstar_m: float | None = None
         self._committed_lstar_mode: LStarSelectionMode | None = None
@@ -79,15 +83,18 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._committed_eps_c: float | None = None
         self._committed_eps_mode: LStarSelectionMode | None = None
         self._committed_eps_justification = ""
+        self._committed_throat_upstream_ratio: float | None = None
+        self._committed_throat_downstream_ratio: float | None = None
         self._last_preview_result: ChamberGeometryResult | None = None
 
         self._variables = {
             "chamber_model": tk.StringVar(value=CHAMBER_MODEL_LABELS[ChamberGeometryModel.CYLINDRICAL]),
-            "throat_diameter_m": tk.StringVar(value="0.1000"),
             "selected_lstar_m": tk.StringVar(value="not yet applied"),
             "selected_epsilon_c": tk.StringVar(value="not yet applied"),
             "convergent_half_angle_deg": tk.StringVar(value="45.000"),
             "corner_radius_ratio": tk.StringVar(value="0.0000"),
+            "throat_upstream_ratio": tk.StringVar(value=f"{DEFAULT_THROAT_UPSTREAM_RATIO:.4f}"),
+            "throat_downstream_ratio": tk.StringVar(value=f"{DEFAULT_THROAT_DOWNSTREAM_RATIO:.4f}"),
             "lstar_mode": tk.StringVar(value=SELECTION_MODE_LABELS[LStarSelectionMode.NOMINAL]),
             "custom_lstar_m": tk.StringVar(value=""),
             "eps_mode": tk.StringVar(value=SELECTION_MODE_LABELS[LStarSelectionMode.NOMINAL]),
@@ -104,7 +111,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._warnings_var = tk.StringVar(value="")
         self._stored_calc_var = tk.StringVar(value="Last Geometry Calculation: not stored yet.")
         self._shape_note_var = tk.StringVar(
-            value="Near-spherical and spherical chamber concepts are visible here but reserved for a later patch."
+            value="Near-spherical and spherical chamber concepts remain visible here as future work while the current predesign flow focuses on the cylindrical chamber."
         )
         self._current_propellant_var = tk.StringVar(value=DEFAULT_LSTAR_PROPELLANT)
         self._lstar_range_text_var = tk.StringVar(value="--")
@@ -118,6 +125,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._eps_slider_min_var = tk.StringVar(value="--")
         self._eps_slider_max_var = tk.StringVar(value="--")
         self._figure_8_15_state_var = tk.StringVar(value=self._FIGURE_8_15_NOTE)
+        self._throat_selection_text_var = tk.StringVar(value="selected: upstream -- / downstream --")
 
         self._result_vars = {
             "lstar_range": tk.StringVar(value="not yet computed"),
@@ -146,15 +154,22 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._eps_slider: ttk.Scale | None = None
         self._apply_lstar_button: ttk.Button | None = None
         self._apply_eps_button: ttk.Button | None = None
+        self._apply_throat_button: ttk.Button | None = None
         self._apply_geometry_button: ttk.Button | None = None
         self._eps_tile_widgets: list[tk.Widget] = []
         self._preview_canvas: tk.Canvas | None = None
+        self._throat_preview_canvas: tk.Canvas | None = None
 
         self._build_widgets()
         self._refresh_results()
 
     def _build_widgets(self) -> None:
-        left_frame = ttk.Frame(self)
+        chamber_section_frame = ttk.LabelFrame(self, text="Chamber Section", padding=10)
+        chamber_section_frame.grid(row=0, column=0, sticky="ew")
+        chamber_section_frame.columnconfigure(0, weight=3)
+        chamber_section_frame.columnconfigure(1, weight=2)
+
+        left_frame = ttk.Frame(chamber_section_frame)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         left_frame.columnconfigure(0, weight=1)
 
@@ -177,59 +192,54 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             justify="left",
         ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 8))
 
-        ttk.Label(input_frame, text="Throat diameter Dt [m]").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(input_frame, textvariable=self._variables["throat_diameter_m"]).grid(
-            row=2,
-            column=1,
-            sticky="ew",
-            pady=4,
-        )
-
-        ttk.Label(input_frame, text="Selected L* [m]").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(input_frame, text="Selected L* [m]").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(
             input_frame,
             textvariable=self._variables["selected_lstar_m"],
             state="readonly",
-        ).grid(row=3, column=1, sticky="ew", pady=4)
+        ).grid(row=2, column=1, sticky="ew", pady=4)
 
-        ttk.Label(input_frame, text="Selected epsilon_c [-]").grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(input_frame, text="Selected epsilon_c [-]").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(
             input_frame,
             textvariable=self._variables["selected_epsilon_c"],
             state="readonly",
-        ).grid(row=4, column=1, sticky="ew", pady=4)
+        ).grid(row=3, column=1, sticky="ew", pady=4)
 
         ttk.Label(input_frame, text="Convergent half angle theta [deg]").grid(
-            row=5, column=0, sticky="w", padx=(0, 10), pady=4
+            row=4, column=0, sticky="w", padx=(0, 10), pady=4
         )
         ttk.Entry(input_frame, textvariable=self._variables["convergent_half_angle_deg"]).grid(
-            row=5, column=1, sticky="ew", pady=4
+            row=4, column=1, sticky="ew", pady=4
         )
 
-        ttk.Label(input_frame, text="r_corner / r_t [-]").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(input_frame, text="r_corner / r_t [-]").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(input_frame, textvariable=self._variables["corner_radius_ratio"]).grid(
-            row=6, column=1, sticky="ew", pady=4
+            row=5, column=1, sticky="ew", pady=4
         )
 
         ttk.Label(
             input_frame,
-            text="Use the L* and epsilon_c tiles on the right to commit preliminary selections into these chamber inputs.",
+            text=(
+                "Dt is taken from the last calculated Current Design throat sizing. "
+                "Use the L*, epsilon_c and throat tiles on the right to commit preliminary selections into these chamber inputs."
+            ),
             wraplength=500,
             justify="left",
-        ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
-        apply_frame = ttk.Frame(left_frame)
-        apply_frame.grid(row=1, column=0, sticky="w", pady=(10, 0))
+        apply_frame = ttk.Frame(input_frame)
+        apply_frame.grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
         self._apply_geometry_button = ttk.Button(
             apply_frame,
-            text="Apply Geometry Inputs",
+            text="Apply Chamber Geometry",
             command=self._apply_geometry_inputs,
             width=22,
         )
         self._apply_geometry_button.grid(row=0, column=0, sticky="w")
 
         result_frame = ttk.LabelFrame(left_frame, text="Chamber Geometry Calculation", padding=10)
-        result_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        result_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         result_frame.columnconfigure(1, weight=1)
         result_frame.columnconfigure(3, weight=1)
 
@@ -297,19 +307,15 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             foreground="#8b5a12",
         ).grid(row=len(result_rows) + 2, column=0, columnspan=4, sticky="ew", pady=(6, 0))
 
-        ttk.Label(left_frame, text=self._NOTE_TEXT, wraplength=560, justify="left").grid(
-            row=3, column=0, sticky="ew", pady=(10, 0)
-        )
-
-        preview_frame = ttk.LabelFrame(left_frame, text="Chamber Liner Geometry Preview", padding=10)
-        preview_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        preview_frame = ttk.LabelFrame(left_frame, text="Chamber Geometry Preview", padding=10)
+        preview_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         preview_frame.columnconfigure(0, weight=1)
         preview_canvas = tk.Canvas(preview_frame, height=220, background="#f7f8fb", highlightthickness=0)
         preview_canvas.grid(row=0, column=0, sticky="ew")
         preview_canvas.bind("<Configure>", self._handle_preview_resize)
         self._preview_canvas = preview_canvas
 
-        right_frame = ttk.Frame(self)
+        right_frame = ttk.Frame(chamber_section_frame)
         right_frame.grid(row=0, column=1, sticky="nsew")
         right_frame.columnconfigure(0, weight=1)
 
@@ -501,10 +507,78 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             justify="left",
         ).grid(row=12, column=0, sticky="ew", pady=(8, 0))
 
+        chamber_empty_tile = ttk.LabelFrame(right_frame, text="", padding=10)
+        chamber_empty_tile.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
+        ttk.Label(chamber_empty_tile, text="").grid(row=0, column=0, pady=70)
+
+        throat_section_frame = ttk.LabelFrame(self, text="Throat Section", padding=10)
+        throat_section_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        throat_section_frame.columnconfigure(0, weight=1)
+        throat_section_frame.columnconfigure(1, weight=1)
+
+        throat_frame = ttk.LabelFrame(throat_section_frame, text="Throat Section", padding=10)
+        throat_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        throat_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(throat_frame, text="Upstream radius R_up / Rt [-]").grid(
+            row=0, column=0, sticky="w", padx=(0, 10), pady=4
+        )
+        ttk.Entry(throat_frame, textvariable=self._variables["throat_upstream_ratio"]).grid(
+            row=0, column=1, sticky="ew", pady=4
+        )
+        ttk.Label(throat_frame, text="Downstream radius R_down / Rt [-]").grid(
+            row=1, column=0, sticky="w", padx=(0, 10), pady=4
+        )
+        ttk.Entry(throat_frame, textvariable=self._variables["throat_downstream_ratio"]).grid(
+            row=1, column=1, sticky="ew", pady=4
+        )
+        ttk.Label(
+            throat_frame,
+            text=(
+                "Nominal preliminary throat-blend radii: upstream 1.500 Rt, downstream 0.382 Rt. "
+                "The closeup below focuses on the downstream throat blend from x/Rt = 0.2 to 0.6."
+            ),
+            wraplength=420,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(
+            throat_frame,
+            textvariable=self._throat_selection_text_var,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        apply_throat_row = ttk.Frame(throat_frame)
+        apply_throat_row.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        apply_throat_button = ttk.Button(
+            apply_throat_row,
+            text="Apply Throat Radii",
+            command=self._apply_throat_selection,
+            width=18,
+        )
+        apply_throat_button.grid(row=0, column=0, sticky="w")
+        self._apply_throat_button = apply_throat_button
+
+        throat_preview_frame = ttk.LabelFrame(throat_section_frame, text="Throat Geometry Closeup", padding=10)
+        throat_preview_frame.grid(row=0, column=1, sticky="nsew")
+        throat_preview_frame.columnconfigure(0, weight=1)
+        throat_preview_canvas = tk.Canvas(
+            throat_preview_frame,
+            height=220,
+            background="#f7f8fb",
+            highlightthickness=0,
+        )
+        throat_preview_canvas.grid(row=0, column=0, sticky="ew")
+        throat_preview_canvas.bind("<Configure>", self._handle_throat_preview_resize)
+        self._throat_preview_canvas = throat_preview_canvas
+
     def bind_apply_selected_lstar(self, callback: Callable[[], None]) -> None:
         """Bind a callback after L* is stored for explicit Current Design transfer."""
 
         self._apply_lstar_callback = callback
+
+    def bind_apply_selected_eps(self, callback: Callable[[], None]) -> None:
+        """Bind a callback after epsilon_c is stored for explicit Current Design transfer."""
+
+        self._apply_eps_callback = callback
 
     def bind_apply_geometry_inputs(self, callback: Callable[[], None]) -> None:
         """Bind a callback after chamber geometry is stored for explicit transfer."""
@@ -515,6 +589,11 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         """Bind a callback whenever a stored chamber state changes."""
 
         self._stored_state_changed_callback = callback
+
+    def bind_inputs_changed(self, callback: Callable[[], None]) -> None:
+        """Bind a callback fired when live chamber/throat draft values change."""
+
+        self._inputs_changed_callback = callback
 
     def seed_from_design(
         self,
@@ -528,38 +607,64 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._current_bundle = current_bundle
         self._stored_calculation = None
         self._stored_lstar_update = None
+        self._stored_eps_update = None
         self._stored_geometry_update = None
         self._stored_calc_var.set("Last Geometry Calculation: not stored yet.")
         self._warnings_var.set("")
         self._status_var.set("Apply L* and epsilon_c selections, then store the chamber geometry calculation.")
 
         propellant_name = self._current_propellant_name(inputs)
-        throat_diameter_m = 0.1000
-        if current_bundle is not None:
-            throat_diameter_m = 2.0 * current_bundle.geometry.throat_radius_m
+        throat_diameter_m = self._current_throat_diameter_m(current_bundle)
         lstar_value = inputs.characteristic_length_m
         if lstar_value is None:
             lstar_value = select_lstar_value(propellant_name, LStarSelectionMode.NOMINAL)
         lstar_mode, custom_lstar = infer_lstar_mode(propellant_name, lstar_value)
 
-        guidance = estimate_contraction_ratio_guidance(
-            lstar_value * (math.pi / 4.0) * throat_diameter_m**2
-        )
-        eps_value = (
-            inputs.contraction_ratio
-            if inputs.contraction_ratio is not None and inputs.contraction_ratio > 1.0
-            else 0.5 * (guidance.contraction_ratio_min + guidance.contraction_ratio_max)
-        )
-        eps_mode, custom_eps = _infer_selection_mode(
-            eps_value,
-            guidance.contraction_ratio_min,
-            guidance.contraction_ratio_max,
-        )
+        guidance = None
+        if throat_diameter_m is not None and throat_diameter_m > 0.0:
+            guidance = estimate_contraction_ratio_guidance(
+                lstar_value * (math.pi / 4.0) * throat_diameter_m**2
+            )
+
+        if guidance is not None:
+            eps_value = (
+                inputs.contraction_ratio
+                if inputs.contraction_ratio is not None and inputs.contraction_ratio > 1.0
+                else 0.5 * (guidance.contraction_ratio_min + guidance.contraction_ratio_max)
+            )
+            eps_mode, custom_eps = _infer_selection_mode(
+                eps_value,
+                guidance.contraction_ratio_min,
+                guidance.contraction_ratio_max,
+            )
+        else:
+            eps_value = inputs.contraction_ratio if inputs.contraction_ratio is not None and inputs.contraction_ratio > 1.0 else None
+            eps_mode = LStarSelectionMode.CUSTOM if eps_value is not None else LStarSelectionMode.NOMINAL
+            custom_eps = eps_value
+
+        throat_radius_m = None if throat_diameter_m is None else 0.5 * throat_diameter_m
+        upstream_ratio = DEFAULT_THROAT_UPSTREAM_RATIO
+        downstream_ratio = DEFAULT_THROAT_DOWNSTREAM_RATIO
+        if (
+            throat_radius_m is not None
+            and throat_radius_m > 0.0
+            and inputs.throat_upstream_radius_m is not None
+            and inputs.throat_upstream_radius_m > 0.0
+        ):
+            upstream_ratio = inputs.throat_upstream_radius_m / throat_radius_m
+        if (
+            throat_radius_m is not None
+            and throat_radius_m > 0.0
+            and inputs.throat_downstream_radius_m is not None
+            and inputs.throat_downstream_radius_m > 0.0
+        ):
+            downstream_ratio = inputs.throat_downstream_radius_m / throat_radius_m
 
         self._suspend_notifications = True
-        self._variables["throat_diameter_m"].set(f"{throat_diameter_m:.5f}")
         self._variables["convergent_half_angle_deg"].set(f"{inputs.convergent_half_angle_deg:.3f}")
         self._variables["corner_radius_ratio"].set("0.0000")
+        self._variables["throat_upstream_ratio"].set(f"{upstream_ratio:.4f}")
+        self._variables["throat_downstream_ratio"].set(f"{downstream_ratio:.4f}")
         self._variables["lstar_mode"].set(SELECTION_MODE_LABELS[lstar_mode])
         self._variables["custom_lstar_m"].set("" if custom_lstar is None else f"{custom_lstar:.4f}")
         self._variables["eps_mode"].set(SELECTION_MODE_LABELS[eps_mode])
@@ -574,6 +679,8 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._committed_eps_c = None
         self._committed_eps_mode = None
         self._committed_eps_justification = ""
+        self._committed_throat_upstream_ratio = None
+        self._committed_throat_downstream_ratio = None
         self._variables["selected_lstar_m"].set("not yet applied")
         self._variables["selected_epsilon_c"].set("not yet applied")
         self._refresh_results()
@@ -606,17 +713,69 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             )
         return dict(self._stored_lstar_update)
 
+    def get_stored_eps_update(self) -> dict[str, object]:
+        """Return the stored epsilon_c update for explicit transfer into Current Design."""
+
+        if self._stored_eps_update is None:
+            raise InputValidationError(
+                ["No stored epsilon_c selection is available yet. Use Apply epsilon_c first."]
+            )
+        return dict(self._stored_eps_update)
+
     def get_stored_geometry_updates(self) -> dict[str, object]:
         """Return the stored chamber geometry update for explicit transfer."""
 
         if self._stored_geometry_update is None:
             raise InputValidationError(
-                ["No stored chamber geometry inputs are available yet. Use Apply Geometry Inputs first."]
+                ["No stored chamber geometry inputs are available yet. Use Apply Chamber Geometry first."]
             )
         return dict(self._stored_geometry_update)
 
+    def get_live_preview_updates(self) -> dict[str, object]:
+        """Return valid draft chamber and throat values for live contour previewing."""
+
+        throat_diameter_m = self._current_throat_diameter_m()
+        if throat_diameter_m is None or throat_diameter_m <= 0.0:
+            return {}
+
+        preview_updates: dict[str, object] = {}
+        throat_radius_m = 0.5 * throat_diameter_m
+        upstream_ratio, downstream_ratio = self._resolve_live_throat_ratios()
+        propellant_name = self._current_propellant_name()
+        if upstream_ratio is not None:
+            preview_updates["throat_upstream_radius_m"] = upstream_ratio * throat_radius_m
+        if downstream_ratio is not None:
+            preview_updates["throat_downstream_radius_m"] = downstream_ratio * throat_radius_m
+        live_lstar_m = self._resolve_live_lstar(propellant_name)
+        if live_lstar_m is not None:
+            preview_updates["characteristic_length_m"] = live_lstar_m
+        guidance = self._current_eps_guidance()
+        if guidance is not None:
+            live_eps = self._resolve_live_epsilon(guidance.contraction_ratio_min, guidance.contraction_ratio_max)
+            if live_eps is not None:
+                preview_updates["contraction_ratio"] = live_eps
+        errors: list[str] = []
+        convergent_half_angle_deg = _parse_required_float(
+            self._variables["convergent_half_angle_deg"].get(),
+            "Convergent half angle theta",
+            errors,
+        )
+        corner_radius_ratio = _parse_optional_float(
+            self._variables["corner_radius_ratio"].get(),
+            "r_corner / r_t",
+            errors,
+        )
+        if not errors:
+            preview_updates["convergent_half_angle_deg"] = convergent_half_angle_deg
+            if corner_radius_ratio is not None and corner_radius_ratio >= 0.0:
+                preview_updates["chamber_corner_radius_m"] = corner_radius_ratio * throat_radius_m
+        return preview_updates
+
     def has_stored_geometry_updates(self) -> bool:
         return self._stored_geometry_update is not None
+
+    def has_stored_eps_update(self) -> bool:
+        return self._stored_eps_update is not None
 
     def has_stored_lstar_update(self) -> bool:
         return self._stored_lstar_update is not None
@@ -628,11 +787,15 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._suspend_notifications:
             return
         self._refresh_results()
+        if self._inputs_changed_callback is not None:
+            self._inputs_changed_callback()
 
     def _handle_text_changed(self, _event: object) -> None:
         if self._suspend_notifications:
             return
         self._refresh_results()
+        if self._inputs_changed_callback is not None:
+            self._inputs_changed_callback()
 
     def _handle_lstar_slider_changed(self, raw_value: str) -> None:
         if self._suspend_notifications:
@@ -687,7 +850,9 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             return
         guidance = self._current_eps_guidance()
         if guidance is None:
-            self._status_var.set("epsilon_c guidance is not available yet. Check Dt and the selected L*.")
+            self._status_var.set(
+                "epsilon_c guidance is not available yet. Calculate Current Design first so the throat sizing can be reused here."
+            )
             return
         selected_eps = self._resolve_live_epsilon(guidance.contraction_ratio_min, guidance.contraction_ratio_max)
         if selected_eps is None:
@@ -695,14 +860,33 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             return
         mode = SELECTION_MODE_VALUES.get(self._variables["eps_mode"].get(), LStarSelectionMode.NOMINAL)
         self._commit_eps_selection(selected_eps, mode, justification)
+        self._stored_eps_update = {"contraction_ratio": selected_eps}
         self._status_var.set(
             "epsilon_c selection was applied into Chamber Geometry Inputs. Store Geometry Inputs when you are ready."
+        )
+        self._refresh_results()
+        if self._apply_eps_callback is not None:
+            self._apply_eps_callback()
+        if self._stored_state_changed_callback is not None:
+            self._stored_state_changed_callback()
+
+    def _apply_throat_selection(self) -> None:
+        upstream_ratio, downstream_ratio = self._resolve_live_throat_ratios()
+        if upstream_ratio is None or downstream_ratio is None:
+            self._status_var.set("Current throat-radius selection is invalid.")
+            return
+        self._commit_throat_selection(upstream_ratio, downstream_ratio)
+        self._status_var.set(
+            "Throat blend radii were applied into the chamber sandbox. Store Geometry Inputs when you are ready."
         )
         self._refresh_results()
         if self._stored_state_changed_callback is not None:
             self._stored_state_changed_callback()
 
     def _apply_geometry_inputs(self) -> None:
+        if self._committed_throat_upstream_ratio is None or self._committed_throat_downstream_ratio is None:
+            self._status_var.set("Apply the Throat Geometry tile first.")
+            return
         try:
             state, result = self._build_live_working_state()
             errors = validate_chamber_justifications(
@@ -719,15 +903,19 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._stored_geometry_update = {
             "contraction_ratio": result.contraction_ratio,
             "convergent_half_angle_deg": result.convergent_half_angle_deg,
+            "chamber_corner_radius_m": result.corner_radius_m,
+            "throat_upstream_radius_m": (self._committed_throat_upstream_ratio or 0.0) * (0.5 * result.throat_diameter_m),
+            "throat_downstream_radius_m": (self._committed_throat_downstream_ratio or 0.0) * (0.5 * result.throat_diameter_m),
         }
         self._stored_calculation = StoredChamberGeometryCalculation(
             working_state=state,
             result=result,
-            notes=["Stored from Apply Geometry Inputs."],
+            notes=["Stored from Apply Chamber Geometry."],
         )
         self._stored_calc_var.set(
-            "Last Geometry Calculation: stored from Apply Geometry Inputs "
-            f"with L* = {result.selected_lstar_m:.4f} m and epsilon_c = {result.contraction_ratio:.4f}."
+            "Last Geometry Calculation: stored from Apply Chamber Geometry "
+            f"with L* = {result.selected_lstar_m:.4f} m, epsilon_c = {result.contraction_ratio:.4f}, "
+            f"R_up/Rt = {self._committed_throat_upstream_ratio:.4f} and R_down/Rt = {self._committed_throat_downstream_ratio:.4f}."
         )
         self._status_var.set(
             "Chamber geometry inputs were stored. Transfer them explicitly into Current Design when you want to commit them."
@@ -752,11 +940,6 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             )
 
         errors: list[str] = []
-        throat_diameter_m = _parse_required_float(
-            self._variables["throat_diameter_m"].get(),
-            "Throat diameter Dt",
-            errors,
-        )
         convergent_half_angle_deg = _parse_required_float(
             self._variables["convergent_half_angle_deg"].get(),
             "Convergent half angle theta",
@@ -772,6 +955,11 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             errors.append("Apply the L* Selection tile first.")
         if self._committed_eps_c is None:
             errors.append("Apply the epsilon_c tile first.")
+        throat_diameter_m = self._current_throat_diameter_m()
+        if throat_diameter_m is None:
+            errors.append(
+                "Calculate Current Design first to provide throat sizing for Chamber Geometry."
+            )
         if errors:
             raise InputValidationError(errors)
 
@@ -799,6 +987,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._current_propellant_var.set(propellant_name)
         self._refresh_lstar_tile(propellant_name)
         self._refresh_eps_tile()
+        self._refresh_throat_tile()
         self._sync_custom_states()
         self._update_button_states()
 
@@ -843,9 +1032,10 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._warnings_var.set("\n".join(warnings) if warnings else "No preliminary warnings.")
         if self._stored_calculation is None:
             self._status_var.set(
-                "Selections are visible in Chamber Geometry Inputs. Use Apply Geometry Inputs to store the chamber calculation."
+                "Selections are visible in Chamber Geometry Inputs. Use Apply Chamber Geometry to store the chamber calculation."
             )
         self._draw_liner_preview(result)
+        self._refresh_throat_preview()
 
     def _refresh_lstar_tile(self, propellant_name: str) -> None:
         min_m, max_m = get_lstar_range(propellant_name)
@@ -867,7 +1057,14 @@ class ChamberGeometryPanel(ttk.LabelFrame):
     def _refresh_eps_tile(self) -> None:
         guidance = self._current_eps_guidance()
         if guidance is None:
-            self._eps_hint_var.set("Apply L* Selection first to unlock epsilon_c guidance.")
+            if self._committed_lstar_m is None:
+                self._eps_hint_var.set("Apply L* Selection first to unlock epsilon_c guidance.")
+            elif self._current_throat_diameter_m() is None:
+                self._eps_hint_var.set(
+                    "Calculate Current Design first to provide Dt and unlock epsilon_c guidance."
+                )
+            else:
+                self._eps_hint_var.set("epsilon_c guidance is not available yet.")
             self._dc_dt_band_var.set("Typical Dc/Dt band: --")
             self._eps_band_var.set("Typical epsilon_c band: --")
             self._eps_slider_min_var.set("--")
@@ -900,6 +1097,22 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             self._suspend_notifications = False
         self._set_eps_tile_enabled(True)
 
+    def _refresh_throat_tile(self) -> None:
+        upstream_ratio, downstream_ratio = self._resolve_live_throat_ratios()
+        if upstream_ratio is None or downstream_ratio is None:
+            self._throat_selection_text_var.set("Live: --")
+            return
+        selection_text = f"Live: upstream {upstream_ratio:.4f} Rt, downstream {downstream_ratio:.4f} Rt"
+        if (
+            self._committed_throat_upstream_ratio is not None
+            and self._committed_throat_downstream_ratio is not None
+        ):
+            selection_text += (
+                f"\nApplied: upstream {self._committed_throat_upstream_ratio:.4f} Rt, "
+                f"downstream {self._committed_throat_downstream_ratio:.4f} Rt"
+            )
+        self._throat_selection_text_var.set(selection_text)
+
     def _sync_custom_states(self) -> None:
         if self._custom_lstar_entry is not None:
             lstar_mode = SELECTION_MODE_VALUES.get(self._variables["lstar_mode"].get(), LStarSelectionMode.NOMINAL)
@@ -930,7 +1143,20 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._apply_eps_button is not None:
             self._apply_eps_button.configure(state="normal" if eps_ready else "disabled")
 
-        geometry_ready = self._committed_lstar_m is not None and self._committed_eps_c is not None
+        throat_upstream_ratio, throat_downstream_ratio = self._resolve_live_throat_ratios()
+        if self._apply_throat_button is not None:
+            self._apply_throat_button.configure(
+                state="normal"
+                if throat_upstream_ratio is not None and throat_downstream_ratio is not None
+                else "disabled"
+            )
+
+        geometry_ready = (
+            self._committed_lstar_m is not None
+            and self._committed_eps_c is not None
+            and self._committed_throat_upstream_ratio is not None
+            and self._committed_throat_downstream_ratio is not None
+        )
         if geometry_ready:
             try:
                 self._build_live_working_state()
@@ -942,7 +1168,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
     def _current_eps_guidance(self) -> object | None:
         if self._committed_lstar_m is None:
             return None
-        throat_diameter = _parse_optional_float(self._variables["throat_diameter_m"].get(), "Dt", [])
+        throat_diameter = self._current_throat_diameter_m()
         if throat_diameter is None or throat_diameter <= 0.0:
             return None
         throat_area = (math.pi / 4.0) * throat_diameter**2
@@ -984,6 +1210,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             self._committed_eps_mode = None
             self._committed_eps_justification = ""
             self._variables["selected_epsilon_c"].set("not yet applied")
+            self._stored_eps_update = None
             self._stored_geometry_update = None
             self._stored_calculation = None
             self._stored_calc_var.set("Last Geometry Calculation: not stored yet.")
@@ -1000,6 +1227,20 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._committed_eps_mode = mode
         self._committed_eps_justification = justification.strip()
         self._variables["selected_epsilon_c"].set(f"{selected_eps_c:.4f}")
+        self._stored_eps_update = None
+        self._stored_geometry_update = None
+        self._stored_calculation = None
+        self._stored_calc_var.set("Last Geometry Calculation: not stored yet.")
+        self._suspend_notifications = False
+
+    def _commit_throat_selection(
+        self,
+        upstream_ratio: float,
+        downstream_ratio: float,
+    ) -> None:
+        self._suspend_notifications = True
+        self._committed_throat_upstream_ratio = upstream_ratio
+        self._committed_throat_downstream_ratio = downstream_ratio
         self._stored_geometry_update = None
         self._stored_calculation = None
         self._stored_calc_var.set("Last Geometry Calculation: not stored yet.")
@@ -1025,6 +1266,24 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if custom_eps is None or not math.isfinite(custom_eps) or custom_eps <= 1.0:
             return None
         return custom_eps
+
+    def _resolve_live_throat_ratios(self) -> tuple[float | None, float | None]:
+        errors: list[str] = []
+        upstream_ratio = _parse_required_float(
+            self._variables["throat_upstream_ratio"].get(),
+            "Upstream throat radius ratio",
+            errors,
+        )
+        downstream_ratio = _parse_required_float(
+            self._variables["throat_downstream_ratio"].get(),
+            "Downstream throat radius ratio",
+            errors,
+        )
+        if errors:
+            return None, None
+        if upstream_ratio <= 0.0 or downstream_ratio <= 0.0:
+            return None, None
+        return upstream_ratio, downstream_ratio
 
     def _set_placeholder_results(self, status: str, propellant_name: str) -> None:
         min_m, max_m = get_lstar_range(propellant_name)
@@ -1056,6 +1315,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._stored_calculation is None:
             self._status_var.set(status)
         self._draw_preview_placeholder(status)
+        self._refresh_throat_preview()
 
     def _draw_liner_preview(self, result: ChamberGeometryResult) -> None:
         if self._preview_canvas is None:
@@ -1104,20 +1364,34 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         top_points.append((x3, center_y - throat_r))
 
         bottom_points = [(x, 2.0 * center_y - y) for x, y in reversed(top_points)]
-        polygon_points = [coordinate for point in (top_points + bottom_points) for coordinate in point]
-
+        inner_polygon_points = [coordinate for point in (top_points + bottom_points) for coordinate in point]
         canvas.create_polygon(
-            polygon_points,
+            inner_polygon_points,
             fill="#f2d2c2",
             outline="#c25b2a",
             width=2,
             smooth=False,
         )
-        canvas.create_line(x3, center_y - throat_r, x3, center_y + throat_r, fill="#1f4f7a", width=2)
-        canvas.create_text(x0, 10, anchor="nw", text="Cylinder", font=("Segoe UI", 8), fill="#364556")
+        canvas.create_line(
+            x3,
+            center_y - throat_r,
+            x3,
+            center_y + throat_r,
+            fill="#1f4f7a",
+            width=2,
+        )
+        label_color = "#364556"
+        canvas.create_text(x0, 10, anchor="nw", text="Cylinder", font=("Segoe UI", 8), fill=label_color)
         if result.corner_radius_m > 0.0:
-            canvas.create_text(x1 + 10, 10, anchor="nw", text="Rounded corner", font=("Segoe UI", 8), fill="#364556")
-        canvas.create_text(x3 - 10, 10, anchor="ne", text="Throat", font=("Segoe UI", 8), fill="#364556")
+            canvas.create_text(
+                x1 + 10,
+                10,
+                anchor="nw",
+                text="Rounded corner",
+                font=("Segoe UI", 8),
+                fill=label_color,
+            )
+        canvas.create_text(x3 - 10, 10, anchor="ne", text="Throat", font=("Segoe UI", 8, "bold"), fill=label_color)
 
     def _draw_preview_placeholder(self, message: str) -> None:
         if self._preview_canvas is None:
@@ -1140,7 +1414,211 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._last_preview_result is not None:
             self._draw_liner_preview(self._last_preview_result)
         else:
-            self._draw_preview_placeholder("Apply L* and epsilon_c selections to preview the liner shape.")
+            self._draw_preview_placeholder(
+                "Apply L* and epsilon_c selections and use a calculated Current Design throat size to preview the chamber geometry."
+            )
+
+    def _refresh_throat_preview(self) -> None:
+        if self._throat_preview_canvas is None:
+            return
+        upstream_ratio, downstream_ratio = self._resolve_live_throat_ratios()
+        if upstream_ratio is None or downstream_ratio is None:
+            self._draw_throat_preview_placeholder(
+                "Enter valid upstream and downstream throat radii to preview the local throat shape."
+            )
+            return
+
+        canvas = self._throat_preview_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 520)
+        height = max(canvas.winfo_height(), 220)
+        x_margin = 34.0
+        y_margin = 20.0
+        plot_left = x_margin
+        plot_right = width - x_margin
+        plot_top = y_margin + 18.0
+        plot_bottom = height - y_margin - 18.0
+        center_y = 0.5 * (plot_top + plot_bottom)
+        x_min_norm = 0.2
+        x_max_norm = 0.6
+        radial_min = 0.98
+        radial_max = 1.0 + max(downstream_ratio, 0.35) + 0.10
+
+        def map_x(x_norm: float) -> float:
+            return plot_left + (
+                (x_norm - x_min_norm) / max(x_max_norm - x_min_norm, 1.0e-9)
+            ) * (plot_right - plot_left)
+
+        def radial_to_offset(radius_norm: float) -> float:
+            normalized = (radius_norm - radial_min) / max(radial_max - radial_min, 1.0e-9)
+            return normalized * (center_y - plot_top)
+
+        def map_y_top(radius_norm: float) -> float:
+            return center_y - radial_to_offset(radius_norm)
+
+        def map_y_bottom(radius_norm: float) -> float:
+            return center_y + radial_to_offset(radius_norm)
+
+        canvas.create_rectangle(0, 0, width, height, fill="#f7f8fb", outline="")
+        canvas.create_rectangle(
+            plot_left,
+            plot_top,
+            plot_right,
+            plot_bottom,
+            fill="#fcfdff",
+            outline="#d5dde6",
+            width=1,
+        )
+
+        for x_norm, label in ((0.2, "0.2 Rt"), (0.4, "0.4 Rt"), (0.6, "0.6 Rt")):
+            x_pos = map_x(x_norm)
+            dash = (3, 3)
+            color = "#d7dee6"
+            width_px = 1
+            canvas.create_line(x_pos, plot_top, x_pos, plot_bottom, fill=color, dash=dash, width=width_px)
+            canvas.create_text(x_pos, plot_bottom + 10, text=label, fill="#5d6977", font=("Segoe UI", 8))
+
+        canvas.create_line(plot_left, center_y, plot_right, center_y, fill="#d3dce5", dash=(4, 3))
+        throat_top_y = map_y_top(1.0)
+        throat_bottom_y = map_y_bottom(1.0)
+        canvas.create_line(plot_left, throat_top_y, plot_right, throat_top_y, fill="#e3e8ee", dash=(2, 4))
+        canvas.create_line(plot_left, throat_bottom_y, plot_right, throat_bottom_y, fill="#e3e8ee", dash=(2, 4))
+        canvas.create_text(plot_left + 6, throat_top_y - 8, anchor="w", text="Rt", fill="#647180", font=("Segoe UI", 8))
+
+        def build_arc_xy(start_x: float, end_x: float, ratio: float, samples: int = 48) -> list[tuple[float, float, float]]:
+            points: list[tuple[float, float, float]] = []
+            for step in range(samples + 1):
+                x_norm = start_x + (end_x - start_x) * (step / samples)
+                radial_offset = max(ratio**2 - x_norm**2, 0.0)
+                radius_norm = 1.0 + ratio - math.sqrt(radial_offset)
+                points.append((x_norm, map_x(x_norm), radius_norm))
+            return points
+
+        downstream_extent = min(x_max_norm, max(downstream_ratio, 0.0))
+        downstream_start = x_min_norm
+        downstream_points = (
+            build_arc_xy(downstream_start, downstream_extent, downstream_ratio)
+            if downstream_extent > downstream_start
+            else []
+        )
+
+        def draw_region(
+            points: list[tuple[float, float, float]],
+            *,
+            fill: str,
+            outline: str,
+            accent: str,
+        ) -> None:
+            if len(points) < 2:
+                return
+            polygon_points: list[float] = []
+            for _x_norm, x_pos, radius_norm in points:
+                polygon_points.extend((x_pos, map_y_top(radius_norm)))
+            for _x_norm, x_pos, radius_norm in reversed(points):
+                polygon_points.extend((x_pos, map_y_bottom(radius_norm)))
+            canvas.create_polygon(
+                polygon_points,
+                fill=fill,
+                outline="",
+            )
+            top_line = [coordinate for _x_norm, x_pos, radius_norm in points for coordinate in (x_pos, map_y_top(radius_norm))]
+            bottom_line = [
+                coordinate
+                for _x_norm, x_pos, radius_norm in points
+                for coordinate in (x_pos, map_y_bottom(radius_norm))
+            ]
+            canvas.create_line(*top_line, fill=outline, width=2.5, smooth=True)
+            canvas.create_line(*bottom_line, fill=outline, width=2.5, smooth=True)
+            start_x = points[0][1]
+            end_x = points[-1][1]
+            canvas.create_line(start_x, map_y_top(points[0][2]), start_x, map_y_bottom(points[0][2]), fill=accent, width=1)
+            canvas.create_line(end_x, map_y_top(points[-1][2]), end_x, map_y_bottom(points[-1][2]), fill=accent, width=1)
+
+        draw_region(
+            downstream_points,
+            fill="#dfe9f5",
+            outline="#2c628f",
+            accent="#c1d4e7",
+        )
+
+        canvas.create_text(
+            width / 2.0,
+            8,
+            anchor="n",
+            text="Downstream throat closeup, scaled by Rt",
+            fill="#334250",
+            font=("Segoe UI", 8, "bold"),
+        )
+        canvas.create_text(
+            plot_left + 8,
+            plot_top + 8,
+            anchor="nw",
+            text=f"R_down = {downstream_ratio:.4f} Rt",
+            fill="#25557e",
+            font=("Segoe UI", 8, "bold"),
+        )
+
+        if downstream_points:
+            end_x_norm, end_x, end_radius = downstream_points[-1]
+            end_angle = math.asin(min(max(end_x_norm / max(downstream_ratio, 1.0e-9), -1.0), 1.0))
+            tangent_slope = math.tan(end_angle)
+            if x_max_norm > end_x_norm and tangent_slope > 0.0:
+                end_top_y = map_y_top(end_radius)
+                end_bottom_y = map_y_bottom(end_radius)
+                continuation_end_x = map_x(x_max_norm)
+                continuation_dx = x_max_norm - end_x_norm
+                continuation_radius = end_radius + tangent_slope * continuation_dx
+                continuation_top_y = map_y_top(continuation_radius)
+                continuation_bottom_y = map_y_bottom(continuation_radius)
+                canvas.create_line(
+                    end_x,
+                    end_top_y,
+                    continuation_end_x,
+                    continuation_top_y,
+                    fill="#6e7d8a",
+                    dash=(4, 3),
+                    width=2,
+                )
+                canvas.create_line(
+                    end_x,
+                    end_bottom_y,
+                    continuation_end_x,
+                    continuation_bottom_y,
+                    fill="#6e7d8a",
+                    dash=(4, 3),
+                    width=2,
+                )
+        if downstream_extent < x_max_norm:
+            continuation_x = map_x(max(downstream_extent, x_min_norm))
+            canvas.create_text(
+                continuation_x + 12,
+                center_y - 18,
+                anchor="w",
+                text="nozzle contour continues",
+                fill="#6e7d8a",
+                font=("Segoe UI", 8),
+            )
+
+    def _draw_throat_preview_placeholder(self, message: str) -> None:
+        if self._throat_preview_canvas is None:
+            return
+        canvas = self._throat_preview_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 520)
+        height = max(canvas.winfo_height(), 220)
+        canvas.create_rectangle(0, 0, width, height, fill="#f7f8fb", outline="")
+        canvas.create_rectangle(34, 38, width - 34, height - 38, fill="#fcfdff", outline="#d5dde6", width=1)
+        canvas.create_text(
+            width / 2.0,
+            height / 2.0,
+            text=message,
+            width=width - 40,
+            justify="center",
+            fill="#667381",
+        )
+
+    def _handle_throat_preview_resize(self, _event: object) -> None:
+        self._refresh_throat_preview()
 
     def _get_text_value(self, key: str) -> str:
         widget = self._justification_text_widgets[key]
@@ -1151,6 +1629,15 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if active_inputs is None:
             return DEFAULT_LSTAR_PROPELLANT
         return suggest_lstar_propellant(active_inputs.oxidizer, active_inputs.fuel) or DEFAULT_LSTAR_PROPELLANT
+
+    def _current_throat_diameter_m(self, bundle: ExportBundle | None = None) -> float | None:
+        active_bundle = bundle if bundle is not None else self._current_bundle
+        if active_bundle is None:
+            return None
+        throat_radius_m = active_bundle.geometry.throat_radius_m
+        if throat_radius_m is None or not math.isfinite(throat_radius_m) or throat_radius_m <= 0.0:
+            return None
+        return 2.0 * throat_radius_m
 
 
 def _parse_required_float(raw_value: str, label: str, errors: list[str]) -> float:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.models import ExportBundle
+from engine.nozzle_geometry import get_top_nozzle_report_metadata
 from engine.unit_system import UnitPreset, convert_to_display, get_unit_symbol
 
 
@@ -116,8 +117,18 @@ def bundle_to_display_dict(bundle: ExportBundle, unit_preset: UnitPreset) -> dic
                 "length",
                 unit_preset,
             ),
+            "estimated_liner_mass": _display_entry(
+                bundle.geometry.estimated_liner_mass_kg,
+                "mass",
+                unit_preset,
+            ),
+            "bell_start_angle_deg": bundle.geometry.bell_start_angle_deg,
+            "bell_exit_angle_deg": bundle.geometry.bell_exit_angle_deg,
+            "top_nozzle_length_fraction_percent": bundle.geometry.top_nozzle_length_fraction_percent,
+            "top_nozzle_angle_source": bundle.geometry.top_nozzle_angle_source,
             "notes": bundle.geometry.notes,
         },
+        "report_metadata": _build_report_metadata(bundle),
         "contour": [
             {
                 "index": index,
@@ -145,6 +156,7 @@ def export_bundle_to_json(
         "display_unit_preset": unit_preset.value,
         "si_bundle": bundle_to_dict(bundle),
         "display": bundle_to_display_dict(bundle, unit_preset),
+        "report_metadata": _build_report_metadata(bundle),
     }
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True),
@@ -169,6 +181,7 @@ def export_geometry_to_json(
         "contour_method": bundle.inputs.contour_method.value,
         "si_geometry": _to_serializable(bundle.geometry),
         "display_geometry": bundle_to_display_dict(bundle, unit_preset)["geometry"],
+        "report_metadata": _build_report_metadata(bundle),
         "contour": [
             {
                 "index": index,
@@ -460,3 +473,10 @@ def _summary_rows(bundle: ExportBundle) -> list[tuple[str, str, float | None, st
 
 def _species_to_string(species: dict[str, float]) -> str:
     return "; ".join(f"{name}={value:.6g}" for name, value in species.items())
+
+
+def _build_report_metadata(bundle: ExportBundle) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if bundle.geometry.bell_start_angle_deg is not None and bundle.geometry.bell_exit_angle_deg is not None:
+        metadata["top_nozzle_angles"] = get_top_nozzle_report_metadata()
+    return metadata

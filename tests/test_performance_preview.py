@@ -38,6 +38,9 @@ def make_preview_bundle() -> ExportBundle:
         exit_radius_m=0.223,
         mass_flow_kg_per_s=35.7,
         current_expansion_ratio=20.0,
+        bell_start_angle_deg=31.5,
+        bell_exit_angle_deg=9.5,
+        top_nozzle_angle_source="Rao / Huzel & Huang chart interpolation via pygasflow",
     )
     return ExportBundle(
         inputs=inputs,
@@ -56,8 +59,30 @@ def test_compute_performance_preview_uses_eta_cstar_design_for_mdot() -> None:
     assert preview.c_star_design_m_s == 1662.5
     assert preview.mass_flow_kg_per_s is not None
     assert abs(preview.mass_flow_kg_per_s - (7.0e6 * 0.0078 / 1662.5)) < 1.0e-9
+    assert preview.cf_base == 1.60
     assert preview.thrust_estimate_n == 0.95 * 1.60 * 7.0e6 * 0.0078
     assert preview.thrust_deviation_exceeds_threshold is True
+    assert preview.bell_start_angle_deg == 31.5
+    assert preview.exit_angle_deg == 9.5
+    assert preview.nozzle_angle_source == "Rao / Huzel & Huang chart interpolation via pygasflow"
+    assert preview.divergent_loss_enabled is False
+
+
+def test_compute_performance_preview_applies_committed_divergent_loss_when_enabled() -> None:
+    bundle = make_preview_bundle()
+
+    preview = compute_performance_preview(
+        bundle.inputs,
+        bundle,
+        0.95,
+        use_divergent_loss=True,
+        divergent_loss_factor=0.98,
+    )
+
+    assert preview.divergent_loss_enabled is True
+    assert preview.cf_base == 1.60
+    assert preview.cf_design == 1.60 * 0.98
+    assert preview.thrust_estimate_n == 0.95 * (1.60 * 0.98) * 7.0e6 * 0.0078
 
 
 def test_eta_cstar_band_returns_expected_color_bands() -> None:

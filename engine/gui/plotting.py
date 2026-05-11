@@ -41,6 +41,7 @@ class ContourPlotFrame(ttk.LabelFrame):
         self._contour: list[NozzlePoint] = []
         self._profile: list[ThermochemistryProfilePoint] = []
         self._markers: list[ContourMarker] = []
+        self._wall_thickness_m: float | None = None
         self._selected_index: int | None = None
 
         if Figure is None or FigureCanvasTkAgg is None:
@@ -75,12 +76,14 @@ class ContourPlotFrame(ttk.LabelFrame):
         contour: list[NozzlePoint],
         profile: list[ThermochemistryProfilePoint],
         markers: list[ContourMarker] | None = None,
+        wall_thickness_m: float | None = None,
     ) -> None:
         """Render the contour if matplotlib is available."""
 
         self._contour = contour
         self._profile = profile
         self._markers = markers or []
+        self._wall_thickness_m = wall_thickness_m
         self._selected_index = None
         self._redraw()
 
@@ -102,6 +105,18 @@ class ContourPlotFrame(ttk.LabelFrame):
             r_display = [convert_to_display(point.radius_m, "length", self._unit_preset) for point in self._contour]
             self._axis.plot(x_display, r_display, color="#c25b2a", linewidth=2.2)
             self._axis.fill_between(x_display, r_display, color="#f2d2c2", alpha=0.7)
+            if self._wall_thickness_m is not None and self._wall_thickness_m > 0.0:
+                wall_display = [
+                    convert_to_display(point.radius_m + self._wall_thickness_m, "length", self._unit_preset)
+                    for point in self._contour
+                ]
+                self._axis.plot(
+                    x_display,
+                    wall_display,
+                    color="#6e8598",
+                    linewidth=1.8,
+                    linestyle="--",
+                )
             self._axis.axvline(0.0, color="#555555", linestyle="--", linewidth=1.0)
             if self._selected_index is not None:
                 selected = self._contour[self._selected_index]

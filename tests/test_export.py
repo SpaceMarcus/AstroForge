@@ -3,7 +3,13 @@
 from pathlib import Path
 
 from engine.io import export_engine_preset, load_engine_preset
-from engine.io.export import bundle_to_dict, export_bundle, export_geometry_to_csv, export_geometry_to_json
+from engine.io.export import (
+    bundle_to_dict,
+    bundle_to_display_dict,
+    export_bundle,
+    export_geometry_to_csv,
+    export_geometry_to_json,
+)
 from engine.models import (
     BellContourVariant,
     ChemistryMode,
@@ -61,6 +67,10 @@ def make_bundle() -> ExportBundle:
         exit_area_m2=0.156,
         exit_radius_m=0.223,
         mass_flow_kg_per_s=35.7,
+        bell_start_angle_deg=31.5,
+        bell_exit_angle_deg=9.5,
+        top_nozzle_length_fraction_percent=80.0,
+        top_nozzle_angle_source="Rao / Huzel & Huang chart interpolation via pygasflow",
     )
     contour = [
         NozzlePoint(x_m=0.0, radius_m=0.05, area_m2=0.00785),
@@ -140,6 +150,16 @@ def test_geometry_only_exports_write_requested_files(tmp_path: Path) -> None:
 
     assert geometry_json.exists()
     assert geometry_csv.exists()
+
+
+def test_display_export_includes_top_nozzle_report_metadata() -> None:
+    display = bundle_to_display_dict(make_bundle(), UnitPreset.SI)
+
+    assert display["geometry"]["bell_start_angle_deg"] == 31.5
+    assert display["geometry"]["bell_exit_angle_deg"] == 9.5
+    assert display["report_metadata"]["top_nozzle_angles"]["method"] == (
+        "Digitized Rao/Huzel-&-Huang TOP nozzle chart interpolation"
+    )
 
 
 def test_engine_preset_roundtrip_preserves_inputs_and_ui_state(tmp_path: Path) -> None:

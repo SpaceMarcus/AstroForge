@@ -23,6 +23,13 @@ class ThermochemistryBackend(ABC):
         """Run the thermochemistry backend for a validated engine input set."""
 
     @abstractmethod
+    def estimate_ambient_matched_expansion_ratio(
+        self,
+        inputs: InputParameters,
+    ) -> float | None:
+        """Return a preliminary ambient-matched Ae/At value when the backend can provide one."""
+
+    @abstractmethod
     def build_of_sweep(
         self,
         inputs: InputParameters,

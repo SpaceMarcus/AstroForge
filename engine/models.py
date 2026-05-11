@@ -83,6 +83,7 @@ class InputParameters:
     throat_upstream_radius_m: float | None = None
     throat_downstream_radius_m: float | None = None
     convergent_half_angle_deg: float = 45.0
+    chamber_corner_radius_m: float | None = None
     manufacturing_mode: ManufacturingMode = ManufacturingMode.TRADITIONAL
     manufacturing_route: ManufacturingRoute = ManufacturingRoute.MILLED_CHANNELS_CLOSEOUT
     liner_material: str = "CuCrZr"
@@ -165,6 +166,11 @@ class GeometryResult:
     optimal_expansion_ratio: float | None = None
     reference_conical_length_m: float | None = None
     current_nozzle_length_m: float | None = None
+    bell_start_angle_deg: float | None = None
+    bell_exit_angle_deg: float | None = None
+    top_nozzle_length_fraction_percent: float | None = None
+    top_nozzle_angle_source: str | None = None
+    estimated_liner_mass_kg: float | None = None
     notes: list[str] = field(default_factory=list)
 
 

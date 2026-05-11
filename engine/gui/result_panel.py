@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable
@@ -13,10 +14,13 @@ from engine.models import (
     InputParameters,
     ManufacturingMode,
     ManufacturingRoute,
+    NozzleContourMethod,
     PredictedSeparationPoint,
     ThermochemistryProfilePoint,
     WallThicknessMode,
 )
+from engine.nozzle_geometry import compute_divergence_efficiency
+from engine.nozzle_preview import build_nozzle_preview
 from engine.unit_system import (
     UnitPreset,
     convert_from_display,
@@ -83,41 +87,63 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
     """Structured geometry editor used by the Geometry and Material tab."""
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset = UnitPreset.SI_CAD) -> None:
-        super().__init__(master, text="Geometry Editor", padding=12)
+        super().__init__(master, text="Nozzle Section", padding=12)
         self.columnconfigure(0, weight=1)
         self._unit_preset = unit_preset
         self._nozzle_controls_enabled = True
+        self._suspend_notifications = False
+        self._change_callback: Callable[[], None] | None = None
+        self._apply_divergent_loss_callback: Callable[[], None] | None = None
         self._current_contour_family_label = tk.StringVar(value="not yet set")
         self._current_is_bell = False
+        self._runtime_inputs: InputParameters | None = None
+        self._runtime_bundle: ExportBundle | None = None
+        self._preview_error_message = ""
         self._flow_case_note_var = tk.StringVar(value="")
+        self._nozzle_calculation_var = tk.StringVar(value="No nozzle draft loaded yet.")
+        self._divergent_loss_var = tk.StringVar(value="Divergent loss: not available yet.")
+        self._inflow_angle_var = tk.StringVar(
+            value="Bell start angle guidance will appear here once a valid TOP draft is available."
+        )
+        self._outflow_angle_var = tk.StringVar(
+            value="Exit-angle guidance will appear here once a valid TOP draft is available."
+        )
         self._field_labels: dict[str, ttk.Label] = {}
         self._bell_subtype_widgets: list[tk.Widget] = []
         self._nozzle_widgets: list[tk.Widget] = []
+        self._preview_canvas: tk.Canvas | None = None
+        self._apply_divergent_loss_button: ttk.Button | None = None
+        self._runtime_default_expansion_ratio: float | None = None
         self._variables = {
             "bell_subtype": tk.StringVar(value=SUBTYPE_LABELS[BellContourVariant.PARABOLA]),
             "expansion_ratio": tk.StringVar(),
+            "length_fraction_percent": tk.StringVar(),
             "manual_nozzle_length": tk.StringVar(),
-            "throat_upstream_radius": tk.StringVar(),
-            "throat_downstream_radius": tk.StringVar(),
         }
+        for variable in self._variables.values():
+            variable.trace_add("write", self._handle_changed)
         self._build_widgets()
 
     def _build_widgets(self) -> None:
-        general_frame = ttk.LabelFrame(self, text="General Geometry", padding=10)
-        general_frame.grid(row=0, column=0, sticky="ew")
-        general_frame.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
 
-        ttk.Label(general_frame, text="Contour family").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        nozzle_frame = ttk.LabelFrame(self, text="Nozzle Geometry", padding=10)
+        nozzle_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        nozzle_frame.columnconfigure(1, weight=1)
+        self._nozzle_frame = nozzle_frame
+
+        ttk.Label(nozzle_frame, text="Current contour family").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(
-            general_frame,
+            nozzle_frame,
             textvariable=self._current_contour_family_label,
             state="readonly",
         ).grid(row=0, column=1, sticky="ew", pady=4)
 
-        bell_label = ttk.Label(general_frame, text="Bell subtype")
+        bell_label = ttk.Label(nozzle_frame, text="Bell subtype")
         bell_label.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
         bell_box = ttk.Combobox(
-            general_frame,
+            nozzle_frame,
             state="readonly",
             textvariable=self._variables["bell_subtype"],
             values=list(SUBTYPE_VALUES),
@@ -126,61 +152,83 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         self._bell_subtype_widgets.extend([bell_label, bell_box])
         self._nozzle_widgets.append(bell_box)
 
-        throat_frame = ttk.LabelFrame(self, text="Throat Geometry", padding=10)
-        throat_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        throat_frame.columnconfigure(1, weight=1)
-        self._field_labels["throat_upstream_radius"] = ttk.Label(throat_frame)
-        self._field_labels["throat_upstream_radius"].grid(
-            row=0, column=0, sticky="w", padx=(0, 10), pady=4
-        )
-        ttk.Entry(
-            throat_frame,
-            textvariable=self._variables["throat_upstream_radius"],
-        ).grid(row=0, column=1, sticky="ew", pady=4)
-        self._field_labels["throat_downstream_radius"] = ttk.Label(throat_frame)
-        self._field_labels["throat_downstream_radius"].grid(
-            row=1, column=0, sticky="w", padx=(0, 10), pady=4
-        )
-        ttk.Entry(
-            throat_frame,
-            textvariable=self._variables["throat_downstream_radius"],
-        ).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Label(
-            throat_frame,
-            text=(
-                "Upstream and downstream throat blend radii are relevant for all contour families. "
-                "They are stored now so later contour-shaping, cooling-channel and curvature rules can use them."
-            ),
-            wraplength=440,
-            justify="left",
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-
-        nozzle_frame = ttk.LabelFrame(self, text="Nozzle Geometry", padding=10)
-        nozzle_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        nozzle_frame.columnconfigure(1, weight=1)
-        self._nozzle_frame = nozzle_frame
-
         self._field_labels["expansion_ratio"] = ttk.Label(nozzle_frame, text="eps = Ae/At [-]")
-        self._field_labels["expansion_ratio"].grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._field_labels["expansion_ratio"].grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
         expansion_entry = ttk.Entry(nozzle_frame, textvariable=self._variables["expansion_ratio"])
-        expansion_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        expansion_entry.grid(row=2, column=1, sticky="ew", pady=4)
         self._nozzle_widgets.append(expansion_entry)
 
+        ttk.Label(nozzle_frame, text="Bell length Lf [%]").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
+        length_fraction_entry = ttk.Entry(nozzle_frame, textvariable=self._variables["length_fraction_percent"])
+        length_fraction_entry.grid(row=3, column=1, sticky="ew", pady=4)
+        self._nozzle_widgets.append(length_fraction_entry)
+
         self._field_labels["manual_nozzle_length"] = ttk.Label(nozzle_frame)
-        self._field_labels["manual_nozzle_length"].grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._field_labels["manual_nozzle_length"].grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
         manual_entry = ttk.Entry(nozzle_frame, textvariable=self._variables["manual_nozzle_length"])
-        manual_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        manual_entry.grid(row=4, column=1, sticky="ew", pady=4)
         self._nozzle_widgets.append(manual_entry)
 
         ttk.Label(
             nozzle_frame,
             text=(
-                "Bell -> Parabola (TOP) is split into chamber, throat and nozzle sections so we can add "
-                "angles, radii and length rules cleanly in the next patch."
+                "Use either a manual nozzle length or a bell-length fraction Lf here. "
+                "Parabola (TOP) is the active nozzle path. TIC and TOC remain future work."
             ),
             wraplength=440,
             justify="left",
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
+        inflow_frame = ttk.LabelFrame(self, text="Bell start angle θ_n", padding=10)
+        inflow_frame.grid(row=0, column=1, sticky="nsew")
+        inflow_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            inflow_frame,
+            textvariable=self._inflow_angle_var,
+            wraplength=260,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew")
+
+        calculation_frame = ttk.LabelFrame(self, text="Nozzle Calculation", padding=10)
+        calculation_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 12), pady=(12, 0))
+        calculation_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            calculation_frame,
+            textvariable=self._nozzle_calculation_var,
+            wraplength=320,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew")
+        ttk.Label(
+            calculation_frame,
+            textvariable=self._divergent_loss_var,
+            wraplength=320,
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._apply_divergent_loss_button = ttk.Button(
+            calculation_frame,
+            text="Apply Divergent Loss",
+            command=self._apply_divergent_loss,
+            width=20,
+        )
+        self._apply_divergent_loss_button.grid(row=2, column=0, sticky="w", pady=(10, 0))
+
+        outflow_frame = ttk.LabelFrame(self, text="Exit angle θ_e", padding=10)
+        outflow_frame.grid(row=1, column=1, sticky="nsew", pady=(12, 0))
+        outflow_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            outflow_frame,
+            textvariable=self._outflow_angle_var,
+            wraplength=260,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew")
+
+        preview_frame = ttk.LabelFrame(self, text="Nozzle Preview", padding=10)
+        preview_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        preview_frame.columnconfigure(0, weight=1)
+        preview_canvas = tk.Canvas(preview_frame, height=150, background="#f7f8fb", highlightthickness=0)
+        preview_canvas.grid(row=0, column=0, sticky="ew")
+        preview_canvas.bind("<Configure>", self._handle_preview_resize)
+        self._preview_canvas = preview_canvas
 
         ttk.Label(
             self,
@@ -188,9 +236,11 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             wraplength=500,
             justify="left",
             foreground="#7d4d1b",
-        ).grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self._apply_unit_labels()
         self._sync_bell_subtype_visibility()
+        self._refresh_tile_text()
+        self._refresh_preview()
 
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         """Update displayed units for geometry editor fields."""
@@ -200,27 +250,103 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         self._unit_preset = unit_preset
         self._apply_unit_labels()
 
-    def set_inputs(self, inputs: InputParameters) -> None:
+    def set_inputs(
+        self,
+        inputs: InputParameters,
+        *,
+        current_bundle: ExportBundle | None = None,
+    ) -> None:
         """Load geometry-related fields from the shared input model."""
 
+        self._suspend_notifications = True
+        self._runtime_inputs = inputs
+        self._runtime_bundle = current_bundle
         self._current_contour_family_label.set(inputs.contour_method.value.replace("-", " ").title())
         self._current_is_bell = inputs.contour_method.value == "bell"
         self._variables["bell_subtype"].set(SUBTYPE_LABELS[inputs.bell_variant])
-        self._variables["expansion_ratio"].set(f"{inputs.expansion_ratio:.4f}")
+        if current_bundle is not None and current_bundle.geometry.current_expansion_ratio is not None:
+            default_expansion_ratio = current_bundle.geometry.current_expansion_ratio
+        else:
+            default_expansion_ratio = inputs.expansion_ratio
+        self._runtime_default_expansion_ratio = default_expansion_ratio
+        self._variables["expansion_ratio"].set(f"{default_expansion_ratio:.4f}")
+        self._variables["length_fraction_percent"].set(
+            ""
+            if current_bundle is None or current_bundle.geometry.top_nozzle_length_fraction_percent is None
+            else f"{current_bundle.geometry.top_nozzle_length_fraction_percent:.1f}"
+        )
         self._variables["manual_nozzle_length"].set(
             "" if inputs.manual_nozzle_length_m is None else format_quantity(inputs.manual_nozzle_length_m, "length", self._unit_preset)
         )
-        self._variables["throat_upstream_radius"].set(
-            ""
-            if inputs.throat_upstream_radius_m is None
-            else format_quantity(inputs.throat_upstream_radius_m, "length", self._unit_preset)
-        )
-        self._variables["throat_downstream_radius"].set(
-            ""
-            if inputs.throat_downstream_radius_m is None
-            else format_quantity(inputs.throat_downstream_radius_m, "length", self._unit_preset)
-        )
+        self._suspend_notifications = False
         self._sync_bell_subtype_visibility()
+        self._refresh_tile_text()
+        self._refresh_preview()
+
+    def set_runtime_context(
+        self,
+        inputs: InputParameters | None,
+        *,
+        current_bundle: ExportBundle | None = None,
+    ) -> None:
+        """Update preview context without overwriting draft edits."""
+
+        self._runtime_inputs = inputs
+        self._runtime_bundle = current_bundle
+        if inputs is not None:
+            if current_bundle is not None and current_bundle.geometry.current_expansion_ratio is not None:
+                runtime_default_expansion_ratio = current_bundle.geometry.current_expansion_ratio
+            else:
+                runtime_default_expansion_ratio = inputs.expansion_ratio
+            try:
+                current_expansion_ratio = float(self._variables["expansion_ratio"].get().strip().replace(",", "."))
+            except ValueError:
+                current_expansion_ratio = None
+            if (
+                current_expansion_ratio is None
+                or self._runtime_default_expansion_ratio is None
+                or math.isclose(
+                    current_expansion_ratio,
+                    self._runtime_default_expansion_ratio,
+                    rel_tol=1.0e-9,
+                    abs_tol=1.0e-6,
+                )
+            ):
+                self._suspend_notifications = True
+                self._runtime_default_expansion_ratio = runtime_default_expansion_ratio
+                self._variables["expansion_ratio"].set(f"{runtime_default_expansion_ratio:.4f}")
+                self._suspend_notifications = False
+        self._refresh_tile_text()
+        self._refresh_preview()
+
+    def get_preview_commit_metadata(self) -> dict[str, object]:
+        """Return preview-only metadata that can be committed alongside nozzle inputs."""
+
+        preview = self._build_preview_model()
+        if preview is None:
+            return {}
+        # The preview already resolves the active exit angle and bell length, so we reuse
+        # that nozzle-only snapshot when committing divergent-loss assumptions.
+        divergent_loss_factor = compute_divergence_efficiency(preview.outflow_angle_deg)
+        return {
+            "divergent_loss_factor": divergent_loss_factor,
+            "divergent_loss_percent": None
+            if divergent_loss_factor is None
+            else (1.0 - divergent_loss_factor) * 100.0,
+            "nozzle_angle_source": preview.angle_source,
+            "resolved_nozzle_length_m": preview.length_m,
+            "resolved_length_fraction_percent": preview.length_fraction_percent,
+        }
+
+    def bind_inputs_changed(self, callback: Callable[[], None]) -> None:
+        """Bind a callback fired when draft nozzle values change."""
+
+        self._change_callback = callback
+
+    def bind_apply_divergent_loss(self, callback: Callable[[], None]) -> None:
+        """Bind a callback that commits the preview divergent loss to Current Design."""
+
+        self._apply_divergent_loss_callback = callback
 
     def set_flow_case_assessment(self, assessment: FlowCaseAssessment | None) -> None:
         """Disable nozzle-edit controls for subsonic / unchoked cases."""
@@ -255,44 +381,36 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             "Geometry eps",
             errors,
         )
+        length_fraction_percent = _parse_optional_float(
+            self._variables["length_fraction_percent"].get(),
+            "Bell length Lf",
+            errors,
+        )
         manual_nozzle_length = _parse_optional_float(
             self._variables["manual_nozzle_length"].get(),
             "Manual nozzle length",
-            errors,
-        )
-        throat_upstream_radius = _parse_optional_float(
-            self._variables["throat_upstream_radius"].get(),
-            "Upstream throat radius",
-            errors,
-        )
-        throat_downstream_radius = _parse_optional_float(
-            self._variables["throat_downstream_radius"].get(),
-            "Downstream throat radius",
             errors,
         )
 
         if errors:
             raise InputValidationError(errors)
 
+        resolved_manual_length_m = convert_from_display(manual_nozzle_length, "length", self._unit_preset)
+        if resolved_manual_length_m is None and length_fraction_percent is not None:
+            preview = self._build_preview_model()
+            if preview is None:
+                raise InputValidationError(
+                    ["Bell-length fraction could not be resolved into a nozzle length for the current preview."]
+                )
+            resolved_manual_length_m = preview.length_m
+
         return {
             "bell_variant": bell_variant,
             "expansion_ratio": expansion_ratio,
-            "manual_nozzle_length_m": convert_from_display(manual_nozzle_length, "length", self._unit_preset),
-            "throat_upstream_radius_m": convert_from_display(
-                throat_upstream_radius, "length", self._unit_preset
-            ),
-            "throat_downstream_radius_m": convert_from_display(
-                throat_downstream_radius, "length", self._unit_preset
-            ),
+            "manual_nozzle_length_m": resolved_manual_length_m,
         }
 
     def _apply_unit_labels(self) -> None:
-        self._field_labels["throat_upstream_radius"].configure(
-            text=f"Upstream throat radius [{get_unit_symbol('length', self._unit_preset)}]"
-        )
-        self._field_labels["throat_downstream_radius"].configure(
-            text=f"Downstream throat radius [{get_unit_symbol('length', self._unit_preset)}]"
-        )
         self._field_labels["manual_nozzle_length"].configure(
             text=f"Manual nozzle length [{get_unit_symbol('length', self._unit_preset)}]"
         )
@@ -305,6 +423,8 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
                 widget.configure(state=state)
             else:
                 widget.configure(state="normal" if enabled else "disabled")
+        if self._apply_divergent_loss_button is not None and not enabled:
+            self._apply_divergent_loss_button.configure(state="disabled")
         self._sync_bell_subtype_visibility()
 
     def _sync_bell_subtype_visibility(self, *_args: object) -> None:
@@ -315,6 +435,228 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
                     widget.configure(state="readonly" if self._nozzle_controls_enabled else "disabled")
             else:
                 widget.grid_remove()
+
+    def _handle_changed(self, *_args: object) -> None:
+        if self._suspend_notifications:
+            return
+        self._refresh_tile_text()
+        self._refresh_preview()
+        if self._change_callback is not None:
+            self._change_callback()
+
+    def _refresh_tile_text(self) -> None:
+        preview = self._build_preview_model()
+        manual_length_text = self._variables["manual_nozzle_length"].get().strip() or "not set"
+        length_fraction_text = self._variables["length_fraction_percent"].get().strip() or "not set"
+        bell_text = self._variables["bell_subtype"].get() if self._current_is_bell else "not applicable"
+        re_rt_text = "--" if preview is None else f"{preview.exit_radius_m / max(preview.throat_radius_m, 1.0e-9):.3f}"
+        eps_text = "--" if preview is None else f"{preview.expansion_ratio:.3f}"
+        if preview is None:
+            if self._preview_error_message:
+                self._nozzle_calculation_var.set(
+                    f"Current contour family: {self._current_contour_family_label.get()}\n"
+                    f"Bell subtype: {bell_text}\n"
+                    f"Bell length Lf: {length_fraction_text}\n"
+                    f"Manual nozzle length: {manual_length_text}\n"
+                    f"{self._preview_error_message}"
+                )
+                self._inflow_angle_var.set(self._preview_error_message)
+                self._outflow_angle_var.set(self._preview_error_message)
+                self._divergent_loss_var.set("Divergent loss: not available while the nozzle preview is invalid.")
+                if self._apply_divergent_loss_button is not None:
+                    self._apply_divergent_loss_button.configure(state="disabled")
+                return
+            self._nozzle_calculation_var.set(
+                f"Current contour family: {self._current_contour_family_label.get()}\n"
+                f"Bell subtype: {bell_text}\n"
+                f"Expansion ratio eps = {eps_text}\n"
+                f"Approx. re/rt = {re_rt_text}\n"
+                f"Bell length Lf: {length_fraction_text}\n"
+                f"Manual nozzle length: {manual_length_text}"
+            )
+            self._inflow_angle_var.set(
+                "Bell start angle guidance appears once eps is valid and the TOP bell draft is within the Rao chart range."
+            )
+            self._outflow_angle_var.set(
+                "Exit-angle guidance appears once eps is valid and the TOP bell draft is within the Rao chart range."
+            )
+            self._divergent_loss_var.set("Divergent loss: not available until a valid nozzle preview exists.")
+            if self._apply_divergent_loss_button is not None:
+                self._apply_divergent_loss_button.configure(state="disabled")
+            return
+        radius_source = "normalized Rt" if preview.uses_normalized_throat else "Current Design throat"
+        self._inflow_angle_var.set(
+            f"Bell start angle θ_n = {preview.inflow_angle_deg:.2f} deg\n"
+            f"Based on downstream throat radius R_down/Rt = {preview.downstream_radius_ratio:.3f}\n"
+            f"Radius source: {radius_source}"
+        )
+        self._outflow_angle_var.set(
+            f"Exit angle θ_e = {preview.outflow_angle_deg:.2f} deg\n"
+            f"Source: {preview.angle_source or 'Preview approximation'}"
+        )
+        if preview.uses_manual_length:
+            length_source = "manual override"
+        elif preview.angle_source is not None:
+            length_source = "reference 80% bell"
+        else:
+            length_source = "preview approximation"
+        lf_text = "--" if preview.length_fraction_percent is None else f"{preview.length_fraction_percent:.1f} %"
+        self._nozzle_calculation_var.set(
+            f"Current contour family: {self._current_contour_family_label.get()}\n"
+            f"Bell subtype: {bell_text}\n"
+            f"Expansion ratio eps = {preview.expansion_ratio:.3f}\n"
+            f"re/rt = {preview.exit_radius_m / max(preview.throat_radius_m, 1.0e-9):.3f}\n"
+            f"Lf = {lf_text}\n"
+            f"N(x, r) = ({preview.start_x_m:.4f} m, {preview.start_radius_m:.4f} m)\n"
+            f"L = {preview.length_m:.4f} m from {length_source}"
+        )
+        # Divergent loss is shown here because it depends only on the nozzle exit-angle draft
+        # and can therefore be reviewed and committed independently from other geometry edits.
+        divergent_loss_factor = compute_divergence_efficiency(preview.outflow_angle_deg)
+        if divergent_loss_factor is None:
+            self._divergent_loss_var.set("Divergent loss: not available.")
+            if self._apply_divergent_loss_button is not None:
+                self._apply_divergent_loss_button.configure(state="disabled")
+        else:
+            self._divergent_loss_var.set(
+                f"Divergent loss factor = {divergent_loss_factor:.4f}\n"
+                f"Divergent loss = {(1.0 - divergent_loss_factor) * 100.0:.2f} %"
+            )
+            if self._apply_divergent_loss_button is not None:
+                self._apply_divergent_loss_button.configure(state="normal")
+
+    def _handle_preview_resize(self, _event: object) -> None:
+        self._refresh_preview()
+
+    def _apply_divergent_loss(self) -> None:
+        """Commit the current preview loss factor into Current Design."""
+
+        if self._apply_divergent_loss_callback is not None:
+            # The owning window decides how this preview-only loss is stored in Current Design.
+            self._apply_divergent_loss_callback()
+
+    def _refresh_preview(self) -> None:
+        if self._preview_canvas is None:
+            return
+        canvas = self._preview_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 320)
+        height = max(canvas.winfo_height(), 150)
+        preview = self._build_preview_model()
+        if preview is None:
+            canvas.create_text(
+                width / 2.0,
+                height / 2.0,
+                text="Enter a valid expansion ratio to preview the nozzle from x = 0 to x = L.",
+                width=width - 30.0,
+                justify="center",
+                fill="#667381",
+            )
+            return
+
+        center_y = height - 24.0
+        x_margin = 26.0
+        y_margin = 26.0
+        x_scale = (width - 2.0 * x_margin) / max(preview.length_m, 1.0e-9)
+        y_scale = (height - 2.0 * y_margin) / max(preview.exit_radius_m * 1.15, 1.0e-9)
+        scale = min(x_scale, y_scale)
+        top_points: list[float] = []
+        for x_value, radius_value in preview.points:
+            top_points.extend((x_margin + x_value * scale, center_y - radius_value * scale))
+        bottom_points: list[float] = []
+        for index in range(len(top_points) - 2, -1, -2):
+            bottom_points.extend((top_points[index], 2.0 * center_y - top_points[index + 1]))
+
+        canvas.create_polygon(
+            top_points + bottom_points,
+            fill="#dfe9f5",
+            outline="#2c628f",
+            width=2,
+            smooth=self._current_is_bell,
+        )
+        throat_canvas_x = x_margin
+        throat_canvas_radius = preview.throat_radius_m * scale
+        n_canvas_x = x_margin + preview.start_x_m * scale
+        n_canvas_radius = preview.start_radius_m * scale
+        exit_canvas_x = x_margin + preview.length_m * scale
+        exit_canvas_radius = preview.exit_radius_m * scale
+
+        canvas.create_line(
+            throat_canvas_x,
+            center_y - throat_canvas_radius,
+            throat_canvas_x,
+            center_y + throat_canvas_radius,
+            fill="#244a6d",
+            width=2,
+        )
+        canvas.create_oval(
+            n_canvas_x - 3.0,
+            center_y - n_canvas_radius - 3.0,
+            n_canvas_x + 3.0,
+            center_y - n_canvas_radius + 3.0,
+            fill="#c25b2a",
+            outline="",
+        )
+        canvas.create_text(throat_canvas_x, 10, anchor="nw", text="x = 0", font=("Segoe UI", 8), fill="#364556")
+        canvas.create_text(n_canvas_x + 6.0, 10, anchor="nw", text="N", font=("Segoe UI", 8, "bold"), fill="#364556")
+        canvas.create_text(exit_canvas_x, 10, anchor="ne", text="x = L", font=("Segoe UI", 8), fill="#364556")
+        canvas.create_text(
+            width - 10,
+            height - 8,
+            anchor="se",
+            text=f"L ≈ {preview.length_m:.4f} m",
+            font=("Segoe UI", 8),
+            fill="#506170",
+        )
+
+    def _build_preview_model(self) -> object | None:
+        self._preview_error_message = ""
+        try:
+            expansion_ratio = float(self._variables["expansion_ratio"].get().strip().replace(",", "."))
+        except ValueError:
+            return None
+        if not math.isfinite(expansion_ratio) or expansion_ratio <= 1.0:
+            return None
+
+        try:
+            manual_length = float(self._variables["manual_nozzle_length"].get().strip().replace(",", "."))
+        except ValueError:
+            manual_length = None
+        try:
+            length_fraction_percent = float(self._variables["length_fraction_percent"].get().strip().replace(",", "."))
+        except ValueError:
+            length_fraction_percent = None
+
+        runtime_inputs = self._runtime_inputs
+        runtime_bundle = self._runtime_bundle
+        contour_method = runtime_inputs.contour_method if runtime_inputs is not None else NozzleContourMethod.BELL
+        bell_variant = (
+            SUBTYPE_VALUES.get(self._variables["bell_subtype"].get(), BellContourVariant.PARABOLA)
+            if contour_method is NozzleContourMethod.BELL
+            else BellContourVariant.PARABOLA
+        )
+        downstream_radius_ratio = 0.382
+        if runtime_inputs is not None and runtime_bundle is not None and runtime_bundle.geometry.throat_radius_m > 0.0:
+            if runtime_inputs.throat_downstream_radius_m is not None and runtime_inputs.throat_downstream_radius_m > 0.0:
+                downstream_radius_ratio = (
+                    runtime_inputs.throat_downstream_radius_m / runtime_bundle.geometry.throat_radius_m
+                )
+        elif runtime_inputs is not None and runtime_inputs.throat_downstream_radius_m is not None:
+            downstream_radius_ratio = max(runtime_inputs.throat_downstream_radius_m, 0.382)
+        throat_radius = runtime_bundle.geometry.throat_radius_m if runtime_bundle is not None else None
+        try:
+            return build_nozzle_preview(
+                throat_radius_m=throat_radius,
+                expansion_ratio=expansion_ratio,
+                downstream_radius_ratio=downstream_radius_ratio,
+                contour_method=contour_method,
+                bell_variant=bell_variant,
+                manual_length_m=manual_length,
+                length_fraction_input=length_fraction_percent,
+            )
+        except (RuntimeError, ValueError) as exc:
+            self._preview_error_message = str(exc)
+            return None
 
 
 class SummaryPanel(ttk.LabelFrame):
@@ -493,6 +835,7 @@ class GeometryDetailsPanel(ttk.LabelFrame):
         ("Chamber length", "chamber_length_m", "length"),
         ("Mass flow", "mass_flow_kg_per_s", "mass_flow"),
         ("Contour length", "contour_length_m", "length"),
+        ("Estimated liner mass", "estimated_liner_mass_kg", "mass"),
     ]
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset = UnitPreset.SI_CAD) -> None:
@@ -560,6 +903,16 @@ class GeometryDetailsPanel(ttk.LabelFrame):
         self.variables["contour_length_m"].set(
             format_quantity(geometry.contour_length_m, "length", self._unit_preset)
         )
+        self.variables["estimated_liner_mass_kg"].set(
+            format_quantity(geometry.estimated_liner_mass_kg, "mass", self._unit_preset)
+        )
+
+    def set_estimated_liner_mass(self, liner_mass_kg: float | None) -> None:
+        """Update the summary with the latest preview-level liner-mass estimate."""
+
+        self.variables["estimated_liner_mass_kg"].set(
+            format_quantity(liner_mass_kg, "mass", self._unit_preset)
+        )
 
     def _configure_label(self, key: str, label_text: str, quantity: str | None) -> None:
         label = self._label_widgets[key]
@@ -576,9 +929,13 @@ class MaterialOptionsPanel(ttk.LabelFrame):
     """Material and manufacturing editor prepared for future process-specific rules."""
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset = UnitPreset.SI_CAD) -> None:
-        super().__init__(master, text="Manufacturing and Materials", padding=12)
+        super().__init__(master, text="Material Section", padding=12)
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
         self._change_callback: Callable[[], None] | None = None
+        self._apply_callback: Callable[[], None] | None = None
+        self._apply_wall_callback: Callable[[], None] | None = None
+        self._commit_liner_callback: Callable[[], None] | None = None
         self._suspend_notifications = False
         self._unit_preset = unit_preset
         self._field_labels: dict[str, ttk.Label] = {}
@@ -608,8 +965,8 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._sync_wall_mode()
 
     def _build_widgets(self) -> None:
-        manufacturing_frame = ttk.LabelFrame(self, text="Manufacturing Mode", padding=10)
-        manufacturing_frame.grid(row=0, column=0, sticky="ew")
+        manufacturing_frame = ttk.LabelFrame(self, text="Manufacturing", padding=10)
+        manufacturing_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         manufacturing_frame.columnconfigure(1, weight=1)
 
         ttk.Label(manufacturing_frame, text="Mode").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
@@ -637,7 +994,7 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
         materials_frame = ttk.LabelFrame(self, text="Materials", padding=10)
-        materials_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        materials_frame.grid(row=0, column=1, sticky="nsew")
         materials_frame.columnconfigure(1, weight=1)
 
         ttk.Label(materials_frame, text="Liner material").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
@@ -660,8 +1017,8 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             values=["None", "NiCr bond coat", "Ceramic TBC", "Refractory washcoat"],
         ).grid(row=2, column=1, sticky="ew", pady=4)
 
-        wall_frame = ttk.LabelFrame(self, text="Hot-Gas / Coolant Separating Wall", padding=10)
-        wall_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        wall_frame = ttk.LabelFrame(self, text="Liner Wall", padding=10)
+        wall_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 12), pady=(12, 0))
         wall_frame.columnconfigure(1, weight=1)
 
         ttk.Label(wall_frame, text="Wall model").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
@@ -688,6 +1045,24 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             wraplength=420,
             justify="left",
         ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        button_row = ttk.Frame(wall_frame)
+        button_row.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Button(
+            button_row,
+            text="Apply Wall Thickness",
+            command=self._apply_wall_updates,
+            width=20,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            button_row,
+            text="Commit Liner to Thermo Chemistry / Cooling",
+            command=self._commit_liner_updates,
+            width=34,
+        ).grid(row=0, column=1, sticky="w", padx=(10, 0))
+
+        empty_tile = ttk.LabelFrame(self, text="", padding=10)
+        empty_tile.grid(row=1, column=1, sticky="nsew", pady=(12, 0))
+        ttk.Label(empty_tile, text="").grid(row=0, column=0, pady=42)
 
         self._apply_unit_labels()
 
@@ -737,6 +1112,21 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         """Bind a callback fired when the draft material editor changes."""
 
         self._change_callback = callback
+
+    def bind_apply_requested(self, callback: Callable[[], None]) -> None:
+        """Bind a callback to store the current nozzle/material draft state."""
+
+        self._apply_callback = callback
+
+    def bind_apply_wall_requested(self, callback: Callable[[], None]) -> None:
+        """Bind a callback that stores wall-thickness changes for preview use."""
+
+        self._apply_wall_callback = callback
+
+    def bind_commit_liner_requested(self, callback: Callable[[], None]) -> None:
+        """Bind a callback that commits liner assumptions to Current Design."""
+
+        self._commit_liner_callback = callback
 
     def get_material_updates(self) -> dict[str, object]:
         """Return material/manufacturing updates to apply to the shared input model."""
@@ -855,6 +1245,22 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             return
         if self._change_callback is not None:
             self._change_callback()
+
+    def _apply_wall_updates(self) -> None:
+        """Store the current wall-thickness choice for liner-mass previewing."""
+
+        if self._apply_wall_callback is not None:
+            # Wall thickness affects preview mass and wall overlay first; the caller decides
+            # when those assumptions become part of the committed Current Design state.
+            self._apply_wall_callback()
+
+    def _commit_liner_updates(self) -> None:
+        """Commit current liner/material inputs for later thermochemistry/cooling use."""
+
+        if self._commit_liner_callback is not None:
+            # This separate commit keeps liner assumptions explicit because cooling work may
+            # start later than the first chamber/nozzle geometry exploration.
+            self._commit_liner_callback()
 
 
 class ComparisonPanel(ttk.LabelFrame):

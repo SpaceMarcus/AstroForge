@@ -127,6 +127,7 @@ def load_engine_preset(target_path: str | Path) -> tuple[InputParameters, dict[s
         throat_upstream_radius_m=_optional_float(raw_inputs, "throat_upstream_radius_m"),
         throat_downstream_radius_m=_optional_float(raw_inputs, "throat_downstream_radius_m"),
         convergent_half_angle_deg=float(raw_inputs.get("convergent_half_angle_deg", 45.0)),
+        chamber_corner_radius_m=_optional_float(raw_inputs, "chamber_corner_radius_m"),
         manufacturing_mode=ManufacturingMode(
             raw_inputs.get("manufacturing_mode", ManufacturingMode.TRADITIONAL.value)
         ),

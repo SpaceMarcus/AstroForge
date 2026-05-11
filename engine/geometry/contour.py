@@ -15,6 +15,11 @@ from engine.models import (
     ThermochemistryResult,
     ThermochemistryState,
 )
+from engine.nozzle_geometry import (
+    TOP_NOZZLE_SOURCE,
+    get_top_nozzle_angles,
+    normalize_top_length_fraction,
+)
 
 UNIVERSAL_GAS_CONSTANT_J_PER_MOL_K = 8.31446261815324
 
@@ -28,6 +33,9 @@ def generate_nozzle_contour(
     chamber_length_m: float | None = None,
     chamber_radius_m: float | None = None,
     convergent_half_angle_deg: float = 45.0,
+    throat_upstream_radius_m: float | None = None,
+    throat_downstream_radius_m: float | None = None,
+    chamber_corner_radius_m: float | None = None,
     reference_conical_half_angle_deg: float = 15.0,
     points_per_segment: int = 40,
     include_diverging_section: bool = True,
@@ -38,7 +46,25 @@ def generate_nozzle_contour(
     exit_radius = geometry.exit_radius_m
     chamber_radius = chamber_radius_m or geometry.chamber_radius_m
     chamber_length = chamber_length_m or geometry.chamber_length_m
+    # The Geometry tab can override the default throat-blend radii and chamber
+    # corner radius. When no explicit override is present we keep the historical
+    # MVP defaults so older saved states still render sensibly.
+    upstream_throat_radius = (
+        throat_upstream_radius_m
+        if throat_upstream_radius_m is not None and throat_upstream_radius_m > 0.0
+        else 1.5 * throat_radius
+    )
+    downstream_throat_radius = (
+        throat_downstream_radius_m
+        if throat_downstream_radius_m is not None and throat_downstream_radius_m > 0.0
+        else 0.382 * throat_radius
+    )
+    chamber_corner_radius = max(chamber_corner_radius_m or 0.0, 0.0)
     geometry.current_expansion_ratio = geometry.exit_area_m2 / geometry.throat_area_m2
+    geometry.bell_start_angle_deg = None
+    geometry.bell_exit_angle_deg = None
+    geometry.top_nozzle_length_fraction_percent = None
+    geometry.top_nozzle_angle_source = None
 
     if not include_diverging_section:
         geometry.current_expansion_ratio = 1.0
@@ -50,41 +76,19 @@ def generate_nozzle_contour(
         ]
         points: list[NozzlePoint] = []
         if chamber_radius is not None and chamber_length is not None and chamber_length > 0.0:
-            if method is NozzleContourMethod.BELL and bell_variant is BellContourVariant.PARABOLA:
-                points.extend(
-                    _converging_with_throat_entry_arc(
-                        chamber_radius=chamber_radius,
-                        throat_radius=throat_radius,
-                        chamber_length_m=chamber_length,
-                        half_angle_deg=convergent_half_angle_deg,
-                        entry_radius_m=1.5 * throat_radius,
-                        points_count=points_per_segment,
-                    )
+            # Even in a throat-only subsonic case we still render the chamber-side
+            # blends so the preview matches the selected chamber and throat inputs.
+            points.extend(
+                _converging_section_with_blends(
+                    chamber_radius=chamber_radius,
+                    throat_radius=throat_radius,
+                    chamber_length_m=chamber_length,
+                    half_angle_deg=convergent_half_angle_deg,
+                    chamber_corner_radius_m=chamber_corner_radius,
+                    throat_entry_radius_m=upstream_throat_radius,
+                    points_count=points_per_segment,
                 )
-            else:
-                transition_length = max(
-                    (chamber_radius - throat_radius)
-                    / math.tan(math.radians(convergent_half_angle_deg)),
-                    throat_radius,
-                )
-                chamber_start_x = -(chamber_length + transition_length)
-                points.extend(
-                    _cylindrical_section(
-                        x_start=chamber_start_x,
-                        x_end=-transition_length,
-                        radius_m=chamber_radius,
-                        points_count=max(points_per_segment // 2, 2),
-                    )
-                )
-                points.extend(
-                    _cosine_transition(
-                        x_start=-transition_length,
-                        x_end=0.0,
-                        radius_start=chamber_radius,
-                        radius_end=throat_radius,
-                        points_count=points_per_segment,
-                    )[1:]
-                )
+            )
         else:
             points.append(
                 NozzlePoint(
@@ -113,7 +117,7 @@ def generate_nozzle_contour(
     elif method is NozzleContourMethod.BELL:
         current_nozzle_length = manual_nozzle_length_m or 0.80 * reference_conical_length
         geometry.notes = [
-            "Bell parabola uses a conical reference length and a compact angle correlation.",
+            "Bell parabola uses Rao / Huzel & Huang TOP chart interpolation via pygasflow.",
         ]
         if manual_nozzle_length_m is not None:
             geometry.notes.append("Manual nozzle length applied to the bell-parabola contour.")
@@ -125,37 +129,17 @@ def generate_nozzle_contour(
     points: list[NozzlePoint] = []
 
     if chamber_radius is not None and chamber_length is not None and chamber_length > 0.0:
-        if method is NozzleContourMethod.BELL and bell_variant is BellContourVariant.PARABOLA:
-            converging = _converging_with_throat_entry_arc(
-                chamber_radius=chamber_radius,
-                throat_radius=throat_radius,
-                chamber_length_m=chamber_length,
-                half_angle_deg=convergent_half_angle_deg,
-                entry_radius_m=1.5 * throat_radius,
-                points_count=points_per_segment,
-            )
-        else:
-            transition_length = max(
-                (chamber_radius - throat_radius)
-                / math.tan(math.radians(convergent_half_angle_deg)),
-                throat_radius,
-            )
-            chamber_start_x = -(chamber_length + transition_length)
-            converging = _cylindrical_section(
-                x_start=chamber_start_x,
-                x_end=-transition_length,
-                radius_m=chamber_radius,
-                points_count=max(points_per_segment // 2, 2),
-            )
-            converging.extend(
-                _cosine_transition(
-                    x_start=-transition_length,
-                    x_end=0.0,
-                    radius_start=chamber_radius,
-                    radius_end=throat_radius,
-                    points_count=points_per_segment,
-                )[1:]
-            )
+        # Use one converging builder for both conical and bell nozzles so chamber
+        # and throat edits are reflected consistently across all contour families.
+        converging = _converging_section_with_blends(
+            chamber_radius=chamber_radius,
+            throat_radius=throat_radius,
+            chamber_length_m=chamber_length,
+            half_angle_deg=convergent_half_angle_deg,
+            chamber_corner_radius_m=chamber_corner_radius,
+            throat_entry_radius_m=upstream_throat_radius,
+            points_count=points_per_segment,
+        )
         points.extend(converging)
     else:
         points.append(
@@ -174,14 +158,18 @@ def generate_nozzle_contour(
             points_count=points_per_segment,
         )
     elif bell_variant is BellContourVariant.PARABOLA:
-        diverging = _parabolic_bell_section(
+        diverging, theta_n_deg, theta_e_deg, length_fraction_percent = _parabolic_bell_section(
             throat_radius=throat_radius,
             exit_radius=exit_radius,
             length_m=current_nozzle_length,
             reference_conical_length_m=reference_conical_length,
-            downstream_throat_radius_m=0.382 * throat_radius,
+            downstream_throat_radius_m=downstream_throat_radius,
             points_count=points_per_segment,
         )
+        geometry.bell_start_angle_deg = theta_n_deg
+        geometry.bell_exit_angle_deg = theta_e_deg
+        geometry.top_nozzle_length_fraction_percent = length_fraction_percent
+        geometry.top_nozzle_angle_source = TOP_NOZZLE_SOURCE
     else:
         raise ValueError(
             "Bell subtypes TIC and TOC are visible in the UI but are not numerically implemented yet."
@@ -269,46 +257,85 @@ def build_thermochemistry_profile(
     return profile
 
 
-def _converging_with_throat_entry_arc(
+def _converging_section_with_blends(
     *,
     chamber_radius: float,
     throat_radius: float,
     chamber_length_m: float,
     half_angle_deg: float,
-    entry_radius_m: float,
+    chamber_corner_radius_m: float,
+    throat_entry_radius_m: float,
     points_count: int,
 ) -> list[NozzlePoint]:
-    half_angle = math.radians(half_angle_deg)
-    arc_x_extent = entry_radius_m * math.sin(half_angle)
-    tangent_radius = throat_radius + entry_radius_m * (1.0 - math.cos(half_angle))
-    straight_length = max((chamber_radius - tangent_radius) / math.tan(half_angle), 0.0)
+    """Build the chamber-side contour with cylinder, rounded corner and throat arc."""
 
-    chamber_start_x = -(chamber_length_m + straight_length + arc_x_extent)
-    line_end_x = -arc_x_extent
+    half_angle = math.radians(half_angle_deg)
+    chamber_corner_axial = chamber_corner_radius_m * math.sin(half_angle)
+    throat_arc_x_extent = throat_entry_radius_m * math.sin(half_angle)
+    chamber_tangent_radius = chamber_radius - chamber_corner_radius_m * (1.0 - math.cos(half_angle))
+    throat_tangent_radius = throat_radius + throat_entry_radius_m * (1.0 - math.cos(half_angle))
+    straight_length = max((chamber_tangent_radius - throat_tangent_radius) / math.tan(half_angle), 0.0)
+
+    chamber_start_x = -(chamber_length_m + chamber_corner_axial + straight_length + throat_arc_x_extent)
+    line_end_x = -throat_arc_x_extent
 
     points = _cylindrical_section(
         x_start=chamber_start_x,
-        x_end=-(straight_length + arc_x_extent),
+        x_end=-(straight_length + throat_arc_x_extent + chamber_corner_axial),
         radius_m=chamber_radius,
         points_count=max(points_count // 2, 2),
     )
+    if chamber_corner_radius_m > 0.0:
+        # The chamber corner arc rounds the cylinder-to-convergent junction before
+        # the straight conical run toward the throat-entry blend.
+        arc_start_x = -(straight_length + throat_arc_x_extent + chamber_corner_axial)
+        points.extend(
+            _chamber_corner_arc(
+                chamber_radius=chamber_radius,
+                corner_radius_m=chamber_corner_radius_m,
+                arc_start_x=arc_start_x,
+                half_angle_deg=half_angle_deg,
+                points_count=max(points_count // 3, 5),
+            )[1:]
+        )
     points.extend(
         _linear_transition(
-            x_start=-(straight_length + arc_x_extent),
+            x_start=-(straight_length + throat_arc_x_extent),
             x_end=line_end_x,
-            radius_start=chamber_radius,
-            radius_end=tangent_radius,
+            radius_start=chamber_tangent_radius,
+            radius_end=throat_tangent_radius,
             points_count=max(points_count // 2, 3),
         )[1:]
     )
     points.extend(
         _throat_entry_arc(
             throat_radius=throat_radius,
-            arc_radius_m=entry_radius_m,
+            arc_radius_m=throat_entry_radius_m,
             half_angle_deg=half_angle_deg,
             points_count=max(points_count // 2, 4),
         )[1:]
     )
+    return points
+
+
+def _chamber_corner_arc(
+    *,
+    chamber_radius: float,
+    corner_radius_m: float,
+    arc_start_x: float,
+    half_angle_deg: float,
+    points_count: int,
+) -> list[NozzlePoint]:
+    """Round the cylinder-to-convergent corner before the straight convergent line."""
+
+    half_angle = math.radians(half_angle_deg)
+    points: list[NozzlePoint] = []
+    for index in range(points_count):
+        fraction = index / (points_count - 1)
+        angle = math.pi / 2.0 - half_angle * fraction
+        x = arc_start_x + corner_radius_m * math.cos(angle)
+        radius = chamber_radius - corner_radius_m + corner_radius_m * math.sin(angle)
+        points.append(NozzlePoint(x_m=x, radius_m=radius, area_m2=circle_area_from_radius(radius)))
     return points
 
 
@@ -396,12 +423,18 @@ def _parabolic_bell_section(
     reference_conical_length_m: float,
     downstream_throat_radius_m: float,
     points_count: int,
-) -> list[NozzlePoint]:
-    length_ratio = max(min(length_m / max(reference_conical_length_m, 1.0e-9), 1.15), 0.60)
-    theta_n_deg, theta_e_deg = _default_parabola_angles(length_ratio)
+) -> tuple[list[NozzlePoint], float, float, float]:
+    """Build the TOP bell from the throat arc tangency point to the exit."""
+
+    length_ratio = length_m / max(reference_conical_length_m, 1.0e-9)
+    expansion_ratio = (exit_radius / max(throat_radius, 1.0e-9)) ** 2
+    length_fraction_percent = normalize_top_length_fraction(length_ratio)
+    theta_n_deg, theta_e_deg = get_top_nozzle_angles(expansion_ratio, length_fraction_percent)
     theta_n = math.radians(theta_n_deg)
     theta_e = math.radians(theta_e_deg)
 
+    # N is the tangency point where the downstream throat arc hands over to the
+    # bell parabola. The Geometry tab uses the same construction for its previews.
     x_join = downstream_throat_radius_m * math.sin(theta_n)
     r_join = throat_radius + downstream_throat_radius_m * (1.0 - math.cos(theta_n))
     if length_m <= x_join:
@@ -426,17 +459,7 @@ def _parabolic_bell_section(
         end_point=(length_m, exit_radius),
         points_count=max(points_count, 20),
     )
-    return arc_points + parabola_points[1:]
-
-
-def _default_parabola_angles(length_ratio: float) -> tuple[float, float]:
-    """Return a compact bell-angle pair from the conical-reference length ratio."""
-
-    clamped_ratio = min(max(length_ratio, 0.60), 1.00)
-    blend = (clamped_ratio - 0.60) / 0.40
-    theta_n_deg = 35.0 - blend * 8.0
-    theta_e_deg = 10.0 - blend * 4.0
-    return theta_n_deg, theta_e_deg
+    return arc_points + parabola_points[1:], theta_n_deg, theta_e_deg, length_fraction_percent
 
 
 def _throat_divergent_arc(

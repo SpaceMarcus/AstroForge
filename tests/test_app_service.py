@@ -36,6 +36,12 @@ class FakeBackend(ThermochemistryBackend):
             },
         )
 
+    def estimate_ambient_matched_expansion_ratio(
+        self,
+        inputs: InputParameters,
+    ) -> float | None:
+        return 15.5
+
     def build_of_sweep(
         self,
         inputs: InputParameters,
@@ -76,3 +82,11 @@ def test_application_runs_full_pipeline_without_gui() -> None:
     assert len(bundle.contour) > 0
     assert len(bundle.thermochemistry_profile) == len(bundle.contour)
     assert bundle.of_sweep is not None
+
+
+def test_application_exposes_ambient_matched_expansion_ratio_estimate() -> None:
+    application = EngineDesignApplication(backend=FakeBackend())
+
+    estimate = application.estimate_ambient_matched_expansion_ratio(build_example_inputs())
+
+    assert estimate == 15.5

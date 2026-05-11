@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from engine.geometry.sizing import select_reference_thrust_coefficient
 from engine.models import ExportBundle, InputParameters
+from engine.nozzle_geometry import compute_divergence_efficiency
 
 
 def eta_cstar_band(eta_cstar_design: float) -> str:
@@ -31,12 +32,19 @@ class PerformancePreviewResult:
     throat_area_m2: float | None
     throat_diameter_m: float | None
     cf_design: float | None
+    cf_base: float | None
     isp_vac_s: float | None
     isp_sl_s: float | None
     mass_flow_kg_per_s: float | None
     thrust_estimate_n: float | None
     thrust_deviation_percent: float | None
     expansion_ratio: float | None
+    bell_start_angle_deg: float | None
+    exit_angle_deg: float | None
+    nozzle_angle_source: str | None
+    divergent_loss_factor: float | None
+    divergent_loss_percent: float | None
+    divergent_loss_enabled: bool
 
     @property
     def thrust_deviation_exceeds_threshold(self) -> bool:
@@ -52,6 +60,9 @@ def compute_performance_preview(
     inputs: InputParameters,
     bundle: ExportBundle,
     eta_cstar_design: float,
+    *,
+    use_divergent_loss: bool = False,
+    divergent_loss_factor: float | None = None,
 ) -> PerformancePreviewResult:
     """Build a compact Current Design preview from the latest calculated bundle."""
 
@@ -75,12 +86,24 @@ def compute_performance_preview(
         throat_diameter_m = 2.0 * bundle.geometry.throat_radius_m
 
     try:
-        cf_design = select_reference_thrust_coefficient(
+        cf_base = select_reference_thrust_coefficient(
             bundle.thermochemistry,
             inputs.ambient_pressure_pa,
         )
     except ValueError:
-        cf_design = None
+        cf_base = None
+
+    computed_divergent_loss_factor = divergent_loss_factor
+    if computed_divergent_loss_factor is None:
+        computed_divergent_loss_factor = compute_divergence_efficiency(bundle.geometry.bell_exit_angle_deg)
+    divergent_loss_enabled = bool(use_divergent_loss and computed_divergent_loss_factor is not None)
+    divergent_loss_percent = None
+    if computed_divergent_loss_factor is not None:
+        divergent_loss_percent = (1.0 - computed_divergent_loss_factor) * 100.0
+
+    cf_design = cf_base
+    if cf_design is not None and divergent_loss_enabled:
+        cf_design = cf_design * computed_divergent_loss_factor
 
     mass_flow_kg_per_s = None
     if (
@@ -118,10 +141,17 @@ def compute_performance_preview(
         throat_area_m2=throat_area_m2,
         throat_diameter_m=throat_diameter_m,
         cf_design=cf_design,
+        cf_base=cf_base,
         isp_vac_s=bundle.thermochemistry.isp_vac_s,
         isp_sl_s=bundle.thermochemistry.isp_amb_s,
         mass_flow_kg_per_s=mass_flow_kg_per_s,
         thrust_estimate_n=thrust_estimate_n,
         thrust_deviation_percent=thrust_deviation_percent,
         expansion_ratio=bundle.geometry.current_expansion_ratio,
+        bell_start_angle_deg=bundle.geometry.bell_start_angle_deg,
+        exit_angle_deg=bundle.geometry.bell_exit_angle_deg,
+        nozzle_angle_source=bundle.geometry.top_nozzle_angle_source,
+        divergent_loss_factor=computed_divergent_loss_factor,
+        divergent_loss_percent=divergent_loss_percent,
+        divergent_loss_enabled=divergent_loss_enabled,
     )

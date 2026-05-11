@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from typing import Callable, Protocol
 from engine.chemistry.base import ThermochemistryBackendError
 from engine.flow import classify_input_flow_case
 from engine.geometry import build_contour_markers, predict_separation_point
+from engine.geometry_preview import build_geometry_preview_bundle, with_liner_mass
 from engine.gui.chamber_geometry_panel import ChamberGeometryPanel
 from engine.gui.input_panel import InputPanel
 from engine.gui.plotting import ContourPlotFrame, OFSweepPlotFrame, SpeciesProfilePlotFrame
@@ -31,7 +33,14 @@ from engine.gui.result_panel import (
     SummaryPanel,
 )
 from engine.io import export_engine_preset, load_engine_preset
-from engine.models import ExportBundle, InputParameters, OFSweepMetric, OFSweepPoint, ThermochemistryProfilePoint
+from engine.models import (
+    ExportBundle,
+    InputParameters,
+    OFSweepMetric,
+    OFSweepPoint,
+    ThermochemistryProfilePoint,
+    WallThicknessMode,
+)
 from engine.performance_preview import compute_performance_preview
 from engine.project_state import (
     PROJECT_MODE_LABELS,
@@ -55,6 +64,11 @@ class ApplicationController(Protocol):
     """Minimal controller contract consumed by the GUI."""
 
     def run_case(self, inputs: InputParameters) -> ExportBundle: ...
+
+    def estimate_ambient_matched_expansion_ratio(
+        self,
+        inputs: InputParameters,
+    ) -> float | None: ...
 
     def export_case(
         self,
@@ -95,6 +109,8 @@ class MainWindow(tk.Tk):
         self._example_input_factory = example_input_factory
         self._current_bundle: ExportBundle | None = None
         self._current_separation_point = None
+        self._displayed_contour_bundle: ExportBundle | None = None
+        self._geometry_preview_bundle: ExportBundle | None = None
         self._selected_profile_point: ThermochemistryProfilePoint | None = None
         self._selected_sweep_mixture_ratio: float | None = None
         self._last_preset_path: Path | None = None
@@ -107,6 +123,10 @@ class MainWindow(tk.Tk):
         self._pending_initial_design_lock_inputs: InputParameters | None = None
         self._working_geometry_updates: dict[str, object] | None = None
         self._working_material_updates: dict[str, object] | None = None
+        self._current_design_locked_fields: set[str] = set()
+        self._committed_divergent_loss_factor: float | None = None
+        self._committed_divergent_loss_source: str | None = None
+        self._preview_liner_mass_kg: float | None = None
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -445,68 +465,81 @@ class MainWindow(tk.Tk):
         scrollable.grid(row=0, column=0, sticky="nsew")
         content = scrollable.content
         content.columnconfigure(0, weight=1)
-        content.columnconfigure(1, weight=1)
 
         self._chamber_geometry_panel = ChamberGeometryPanel(content)
-        self._chamber_geometry_panel.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self._chamber_geometry_panel.grid(row=0, column=0, sticky="ew")
         self._chamber_geometry_panel.bind_apply_selected_lstar(self._on_working_lstar_stored)
+        self._chamber_geometry_panel.bind_apply_selected_eps(self._on_working_eps_stored)
         self._chamber_geometry_panel.bind_apply_geometry_inputs(self._on_working_geometry_inputs_stored)
         self._chamber_geometry_panel.bind_stored_state_changed(self._refresh_current_design_transfer_states)
+        self._chamber_geometry_panel.bind_inputs_changed(self._on_geometry_sandbox_inputs_changed)
 
         self._geometry_editor_panel = GeometryMaterialEditorPanel(content, unit_preset=self._unit_preset)
-        self._geometry_editor_panel.grid(row=1, column=0, sticky="new", padx=(0, 12), pady=(12, 0))
+        self._geometry_editor_panel.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        self._geometry_editor_panel.bind_inputs_changed(self._on_geometry_sandbox_inputs_changed)
+        self._geometry_editor_panel.bind_apply_divergent_loss(self.commit_geometry_divergent_loss_to_current_design)
 
         self._material_panel = MaterialOptionsPanel(content, unit_preset=self._unit_preset)
-        self._material_panel.grid(row=1, column=1, sticky="new", pady=(12, 0))
-
-        self._geometry_hint_var = tk.StringVar(
-            value=(
-                "Apply geometry/material edits to update the shared model. "
-                "Then recalculate so the contour and thermochemistry plots become current again."
-            )
-        )
-        ttk.Label(
-            content,
-            textvariable=self._geometry_hint_var,
-            wraplength=980,
-            justify="left",
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self._material_panel.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self._material_panel.bind_inputs_changed(self._on_geometry_sandbox_inputs_changed)
+        self._material_panel.bind_apply_wall_requested(self.apply_wall_thickness_preview)
+        self._material_panel.bind_commit_liner_requested(self.commit_liner_to_thermo_cooling)
 
         self._geometry_plot_frame = ContourPlotFrame(
             content,
             on_point_selected=self._on_profile_point_selected,
             unit_preset=self._unit_preset,
         )
-        self._geometry_plot_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        self._geometry_plot_frame.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
 
-        self._geometry_panel = GeometryDetailsPanel(content, unit_preset=self._unit_preset)
-        self._geometry_panel.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        detail_row = ttk.Frame(content)
+        detail_row.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        detail_row.columnconfigure(0, weight=1)
+        detail_row.columnconfigure(1, weight=1)
+
+        self._geometry_panel = GeometryDetailsPanel(detail_row, unit_preset=self._unit_preset)
+        self._geometry_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+
+        note_box = ttk.LabelFrame(detail_row, text="Note Box", padding=12)
+        note_box.grid(row=0, column=1, sticky="nsew")
+        note_box.columnconfigure(0, weight=1)
+        self._geometry_note_var = tk.StringVar(
+            value=(
+                "Geometry sandbox edits stay explicit. Chamber values are applied in the Chamber Section. "
+                "Nozzle and liner material edits are stored separately and only affect Current Design after you transfer them."
+            )
+        )
+        ttk.Label(
+            note_box,
+            textvariable=self._geometry_note_var,
+            wraplength=420,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew")
+        ttk.Button(
+            note_box,
+            text="Apply Nozzle + Liner Material",
+            command=self.store_working_material_geometry,
+        ).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
         action_bar = ttk.Frame(master, padding=(0, 10, 0, 0))
         action_bar.grid(row=1, column=0, sticky="ew")
-        for column in range(4):
+        for column in range(3):
             action_bar.columnconfigure(column, weight=1)
-        self._apply_material_geometry_button = ttk.Button(
-            action_bar,
-            text="Apply Material/Geometry",
-            command=self.store_working_material_geometry,
-        )
-        self._apply_material_geometry_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(
             action_bar,
             text="Export Geometry JSON",
             command=self.export_geometry_json,
-        ).grid(row=0, column=1, sticky="ew", padx=6)
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(
             action_bar,
             text="Export Geometry CSV",
             command=self.export_geometry_csv,
-        ).grid(row=0, column=2, sticky="ew", padx=6)
+        ).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(
             action_bar,
             text="Clear Errors",
             command=self.reset_error,
-        ).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        ).grid(row=0, column=2, sticky="ew", padx=(6, 0))
 
     def _build_sweep_section(
         self,
@@ -648,12 +681,16 @@ class MainWindow(tk.Tk):
         example = self._example_input_factory()
         self._reset_initial_design_lock_state()
         self._reset_working_geometry_states()
+        self._reset_current_design_geometry_lock_state()
+        self._preview_liner_mass_kg = None
         self._initial_input_panel.set_inputs(example)
         self._initial_input_panel.set_editable(True)
         self._refresh_initial_flow_case_assessment(example)
         self._current_design_linked_to_initial = True
         self._applied_detail_overrides = self._detail_overrides_from_inputs(example)
         self._input_panel.set_inputs(example)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+        self._input_panel.clear_committed_divergent_loss()
         self._seed_geometry_sandbox_from_inputs(example)
         self._refresh_flow_case_assessment(example)
         self._selected_of_var.set(f"{example.mixture_ratio:.4f}")
@@ -698,10 +735,25 @@ class MainWindow(tk.Tk):
             self._error_var.set(str(exc))
             self._status_var.set("Calculation failed.")
             return
+        try:
+            inputs = self._prepare_current_design_inputs_for_calculation()
+        except (InputValidationError, ThermochemistryBackendError) as exc:
+            self._pending_initial_design_lock_inputs = None
+            mark_calculation_failed(self._project_state, str(exc))
+            self._error_var.set(str(exc))
+            self._refresh_dashboard_views()
+            self._status_var.set("Calculation failed.")
+            return
+        except Exception as exc:  # pragma: no cover - GUI integration safeguard
+            self._pending_initial_design_lock_inputs = None
+            mark_calculation_failed(self._project_state, str(exc))
+            self._error_var.set(f"Unexpected error: {exc}")
+            self._refresh_dashboard_views()
+            self._status_var.set("Calculation failed.")
+            return
         mark_calculation_running(self._project_state)
         self._refresh_dashboard_views()
         try:
-            inputs = self._read_current_inputs()
             self._refresh_flow_case_assessment(inputs)
             bundle = self._controller.run_case(inputs)
         except (InputValidationError, ThermochemistryBackendError) as exc:
@@ -719,7 +771,9 @@ class MainWindow(tk.Tk):
             self._status_var.set("Calculation failed.")
             return
 
+        bundle = with_liner_mass(bundle)
         self._current_bundle = bundle
+        self._geometry_preview_bundle = None
         self._current_design_linked_to_initial = False
         self._selected_profile_point = None
         self._selected_sweep_mixture_ratio = bundle.inputs.mixture_ratio
@@ -734,29 +788,20 @@ class MainWindow(tk.Tk):
             bundle.inputs.mixture_ratio,
         )
         self._input_panel.set_performance_preview(
-            compute_performance_preview(inputs, bundle, eta_cstar_design)
+            compute_performance_preview(
+                inputs,
+                bundle,
+                eta_cstar_design,
+                use_divergent_loss=self._input_panel.get_divergent_loss_enabled(),
+                divergent_loss_factor=self._committed_divergent_loss_factor,
+            )
         )
         self._current_separation_point = predict_separation_point(bundle)
-        contour_markers = build_contour_markers(bundle, self._current_separation_point)
-
         self._geometry_panel.update_results(bundle)
+        self._geometry_panel.set_estimated_liner_mass(bundle.geometry.estimated_liner_mass_kg)
         self._comparison_panel.update_results(bundle, self._current_separation_point)
         self._summary_panel.show_default_summary(bundle)
-        self._initial_conditions_plot_frame.update_contour(
-            bundle.contour,
-            bundle.thermochemistry_profile,
-            contour_markers,
-        )
-        self._geometry_plot_frame.update_contour(
-            bundle.contour,
-            bundle.thermochemistry_profile,
-            contour_markers,
-        )
-        self._thermo_contour_plot_frame.update_contour(
-            bundle.contour,
-            bundle.thermochemistry_profile,
-            contour_markers,
-        )
+        self._update_contour_frames_from_bundle(bundle, separation_point=self._current_separation_point)
         self._species_plot_frame.update_profile(bundle.thermochemistry_profile)
         mark_calculation_success(self._project_state)
         self._refresh_flow_case_assessment(inputs, gamma=bundle.thermochemistry.gamma)
@@ -864,6 +909,7 @@ class MainWindow(tk.Tk):
         self._project_state = create_project_state(loaded_mode)
         self._reset_initial_design_lock_state()
         self._reset_working_geometry_states()
+        self._reset_current_design_geometry_lock_state()
         apply_project_management_settings(
             self._project_state,
             ui_state.get("project_management", self._project_state.project_management),
@@ -880,6 +926,8 @@ class MainWindow(tk.Tk):
         self._applied_detail_overrides = self._detail_overrides_from_inputs(inputs)
         self._current_design_linked_to_initial = True
         self._input_panel.set_inputs(inputs)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+        self._input_panel.clear_committed_divergent_loss()
         self._seed_geometry_sandbox_from_inputs(inputs)
         self._refresh_flow_case_assessment(inputs)
         self._last_preset_path = Path(selected)
@@ -895,7 +943,8 @@ class MainWindow(tk.Tk):
         """Export geometry-only data to JSON from the geometry tab."""
 
         self.reset_error()
-        if self._current_bundle is None:
+        bundle = self._geometry_preview_bundle or self._current_bundle
+        if bundle is None:
             self._error_var.set("Run a calculation before exporting geometry.")
             self._status_var.set("Geometry export not possible.")
             return
@@ -912,7 +961,7 @@ class MainWindow(tk.Tk):
 
         try:
             path = self._controller.export_geometry_json(
-                self._current_bundle,
+                bundle,
                 selected,
                 unit_preset=self._unit_preset,
             )
@@ -927,7 +976,8 @@ class MainWindow(tk.Tk):
         """Export the contour geometry to CSV from the geometry tab."""
 
         self.reset_error()
-        if self._current_bundle is None:
+        bundle = self._geometry_preview_bundle or self._current_bundle
+        if bundle is None:
             self._error_var.set("Run a calculation before exporting geometry.")
             self._status_var.set("Geometry export not possible.")
             return
@@ -944,7 +994,7 @@ class MainWindow(tk.Tk):
 
         try:
             path = self._controller.export_geometry_csv(
-                self._current_bundle,
+                bundle,
                 selected,
                 unit_preset=self._unit_preset,
             )
@@ -1048,6 +1098,86 @@ class MainWindow(tk.Tk):
             "Geometry/material sandbox state was stored. Transfer it explicitly in Current Design when you are ready."
         )
 
+    def apply_wall_thickness_preview(self) -> None:
+        """Store wall-thickness inputs and update the liner-mass estimate."""
+
+        self.reset_error()
+        try:
+            material_updates = self._material_panel.get_material_updates()
+        except InputValidationError as exc:
+            self._error_var.set(str(exc))
+            self._status_var.set("Applying wall thickness failed.")
+            return
+
+        self._working_material_updates = material_updates
+        current_inputs = self._try_read_current_inputs()
+        # Rebuild the shared preview first so the mass estimate uses the same contour
+        # that is currently visible in the Geometry, Current Design and Thermo tabs.
+        self._update_geometry_sandbox_runtime_context(current_inputs)
+        preview_bundle = self._geometry_preview_bundle or self._current_bundle
+        if preview_bundle is None:
+            self._preview_liner_mass_kg = None
+            self._geometry_panel.set_estimated_liner_mass(None)
+            self._status_var.set(
+                "Wall thickness was stored. Calculate Current Design first to estimate liner mass from geometry."
+            )
+            return
+        self._preview_liner_mass_kg = preview_bundle.geometry.estimated_liner_mass_kg
+        self._geometry_panel.set_estimated_liner_mass(self._preview_liner_mass_kg)
+        self._status_var.set(
+            "Wall thickness was applied to the geometry preview. Geometry Summary now includes the liner-mass estimate."
+        )
+
+    def commit_liner_to_thermo_cooling(self) -> None:
+        """Commit liner/material assumptions into Current Design for later thermo/cooling use."""
+
+        self.reset_error()
+        try:
+            base_inputs = self._read_current_inputs()
+            material_updates = self._material_panel.get_material_updates()
+        except InputValidationError as exc:
+            self._error_var.set(str(exc))
+            self._status_var.set("Committing liner inputs failed.")
+            return
+
+        self._working_material_updates = material_updates
+        # This is only a data handoff into Current Design for later thermo/cooling work.
+        # The visible result bundle stays untouched until the user explicitly recalculates.
+        updated_inputs = replace(base_inputs, **material_updates)
+        self._apply_current_design_inputs_without_recalculation(
+            updated_inputs,
+            status_message=(
+                "Liner material and wall-thickness assumptions were committed to Current Design "
+                "for later Thermo Chemistry / Cooling work. Recalculate only when you want a new committed result."
+            ),
+        )
+
+    def commit_geometry_divergent_loss_to_current_design(self) -> None:
+        """Commit only the current preview divergent loss into Current Design."""
+
+        self.reset_error()
+        # The preview computes a nozzle-only divergence penalty. We store it separately so
+        # users can commit just this performance correction without committing all geometry.
+        preview_metadata = self._geometry_editor_panel.get_preview_commit_metadata()
+        divergent_loss_factor = preview_metadata.get("divergent_loss_factor")
+        if not isinstance(divergent_loss_factor, float):
+            self._error_var.set("No valid nozzle preview is available for divergent-loss commitment.")
+            self._status_var.set("Divergent-loss commit failed.")
+            return
+        self._set_committed_divergent_loss(
+            divergent_loss_factor=divergent_loss_factor,
+            source_text=preview_metadata.get("nozzle_angle_source"),
+        )
+        self._status_var.set(
+            "The preview divergent loss was committed to Current Design. Enable it in Performance Preview and calculate when you want it applied."
+        )
+
+    def _on_geometry_sandbox_inputs_changed(self) -> None:
+        """Refresh draft chamber/nozzle/material preview without committing anything."""
+
+        current_inputs = self._try_read_current_inputs()
+        self._update_geometry_sandbox_runtime_context(current_inputs)
+
     def load_working_lstar_into_current_design(self) -> None:
         """Load only the stored sandbox L* into Current Design without recalculating."""
 
@@ -1068,6 +1198,29 @@ class MainWindow(tk.Tk):
                 "Existing results remain visible until you calculate again."
             ),
         )
+        self._add_current_design_field_locks("characteristic_length")
+
+    def load_working_eps_into_current_design(self) -> None:
+        """Load only the stored sandbox epsilon_c into Current Design without recalculating."""
+
+        self.reset_error()
+        try:
+            base_inputs = self._read_current_inputs()
+            eps_update = self._chamber_geometry_panel.get_stored_eps_update()
+        except InputValidationError as exc:
+            self._error_var.set(str(exc))
+            self._status_var.set("Loading epsilon_c into Current Design failed.")
+            return
+
+        updated_inputs = replace(base_inputs, **eps_update)
+        self._apply_current_design_inputs_without_recalculation(
+            updated_inputs,
+            status_message=(
+                f"Stored sandbox epsilon_c = {updated_inputs.contraction_ratio:.4f} "
+                "was loaded into Current Design. Existing results remain visible until you calculate again."
+            ),
+        )
+        self._add_current_design_field_locks("contraction_ratio")
 
     def load_working_geometry_inputs_into_current_design(self) -> None:
         """Load stored sandbox chamber/nozzle geometry inputs into Current Design without recalculating."""
@@ -1076,6 +1229,7 @@ class MainWindow(tk.Tk):
         try:
             base_inputs = self._read_current_inputs()
             chamber_updates = self._chamber_geometry_panel.get_stored_geometry_updates()
+            preview_metadata = self._geometry_editor_panel.get_preview_commit_metadata()
         except InputValidationError as exc:
             self._error_var.set(str(exc))
             self._status_var.set("Loading geometry inputs into Current Design failed.")
@@ -1090,6 +1244,14 @@ class MainWindow(tk.Tk):
                 "Existing results remain visible until you calculate again."
             ),
         )
+        locked_fields = {"contraction_ratio", "expansion_ratio"}
+        if geometry_updates.get("manual_nozzle_length_m") is not None:
+            locked_fields.add("manual_nozzle_length")
+        self._add_current_design_field_locks(*sorted(locked_fields))
+        self._set_committed_divergent_loss(
+            divergent_loss_factor=preview_metadata.get("divergent_loss_factor"),
+            source_text=preview_metadata.get("nozzle_angle_source"),
+        )
 
     def apply_working_geometry_material_to_current_design(self) -> None:
         """Load stored sandbox geometry and material updates into Current Design without recalculating."""
@@ -1098,6 +1260,7 @@ class MainWindow(tk.Tk):
         try:
             base_inputs = self._read_current_inputs()
             chamber_updates = self._chamber_geometry_panel.get_stored_geometry_updates()
+            preview_metadata = self._geometry_editor_panel.get_preview_commit_metadata()
         except InputValidationError as exc:
             self._error_var.set(str(exc))
             self._status_var.set("Applying geometry/material to Current Design failed.")
@@ -1113,12 +1276,20 @@ class MainWindow(tk.Tk):
                 "Existing results remain visible until you calculate again."
             ),
         )
+        locked_fields = {"contraction_ratio", "expansion_ratio"}
+        if geometry_updates.get("manual_nozzle_length_m") is not None:
+            locked_fields.add("manual_nozzle_length")
+        self._add_current_design_field_locks(*sorted(locked_fields))
+        self._set_committed_divergent_loss(
+            divergent_loss_factor=preview_metadata.get("divergent_loss_factor"),
+            source_text=preview_metadata.get("nozzle_angle_source"),
+        )
 
     def _on_working_lstar_stored(self) -> None:
-        self._refresh_current_design_transfer_states()
-        self._status_var.set(
-            "Sandbox L* selection was stored. Load it explicitly into Current Design when you want to commit it."
-        )
+        self.load_working_lstar_into_current_design()
+
+    def _on_working_eps_stored(self) -> None:
+        self.load_working_eps_into_current_design()
 
     def _on_working_geometry_inputs_stored(self) -> None:
         self._refresh_current_design_transfer_states()
@@ -1135,6 +1306,7 @@ class MainWindow(tk.Tk):
         self._current_design_linked_to_initial = False
         self._applied_detail_overrides = self._detail_overrides_from_inputs(updated_inputs)
         self._input_panel.set_inputs(updated_inputs)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
         self._refresh_flow_case_assessment(updated_inputs)
         self._update_geometry_sandbox_runtime_context(updated_inputs)
         self._selected_of_var.set(f"{updated_inputs.mixture_ratio:.4f}")
@@ -1144,11 +1316,36 @@ class MainWindow(tk.Tk):
         self._refresh_dashboard_views()
         self._status_var.set(status_message)
 
+    def _prepare_current_design_inputs_for_calculation(self) -> InputParameters:
+        """Return Current Design inputs, auto-resolving eps for the initial baseline path."""
+
+        inputs = self._read_current_inputs()
+        if not self._current_design_linked_to_initial:
+            return inputs
+
+        auto_expansion_ratio = self._controller.estimate_ambient_matched_expansion_ratio(inputs)
+        if auto_expansion_ratio is None:
+            return inputs
+        if not math.isfinite(auto_expansion_ratio) or auto_expansion_ratio <= 0.0:
+            return inputs
+        if math.isclose(auto_expansion_ratio, inputs.expansion_ratio, rel_tol=1.0e-9, abs_tol=1.0e-6):
+            return inputs
+
+        updated_inputs = replace(inputs, expansion_ratio=auto_expansion_ratio)
+        self._applied_detail_overrides = self._detail_overrides_from_inputs(updated_inputs)
+        self._input_panel.set_inputs(updated_inputs)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+        self._refresh_flow_case_assessment(updated_inputs)
+        self._update_geometry_sandbox_runtime_context(updated_inputs)
+        self._selected_of_var.set(f"{updated_inputs.mixture_ratio:.4f}")
+        self._selected_sweep_mixture_ratio = updated_inputs.mixture_ratio
+        return updated_inputs
+
     def _on_profile_point_selected(self, profile_point: ThermochemistryProfilePoint) -> None:
-        if self._current_bundle is None:
+        if self._displayed_contour_bundle is None:
             return
         self._selected_profile_point = profile_point
-        self._summary_panel.show_profile_point(profile_point, self._current_bundle)
+        self._summary_panel.show_profile_point(profile_point, self._displayed_contour_bundle)
 
     def _on_of_sweep_point_selected(self, point: OFSweepPoint) -> None:
         self._selected_of_var.set(f"{point.mixture_ratio:.4f}")
@@ -1338,7 +1535,10 @@ class MainWindow(tk.Tk):
 
         self._applied_detail_overrides = self._detail_overrides_from_inputs(inputs)
         self._current_design_linked_to_initial = True
+        self._reset_current_design_geometry_lock_state()
         self._input_panel.set_inputs(inputs)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+        self._input_panel.clear_committed_divergent_loss()
         self._refresh_flow_case_assessment(inputs)
         self._update_geometry_sandbox_runtime_context(inputs)
         self._selected_of_var.set(f"{inputs.mixture_ratio:.4f}")
@@ -1354,6 +1554,7 @@ class MainWindow(tk.Tk):
     def _detail_overrides_from_inputs(inputs: InputParameters) -> dict[str, object]:
         return {
             "convergent_half_angle_deg": inputs.convergent_half_angle_deg,
+            "chamber_corner_radius_m": inputs.chamber_corner_radius_m,
             "throat_upstream_radius_m": inputs.throat_upstream_radius_m,
             "throat_downstream_radius_m": inputs.throat_downstream_radius_m,
             "manufacturing_mode": inputs.manufacturing_mode,
@@ -1372,17 +1573,108 @@ class MainWindow(tk.Tk):
             else None
         )
         self._chamber_geometry_panel.seed_from_design(inputs, current_bundle=current_bundle)
-        self._geometry_editor_panel.set_inputs(inputs)
+        self._geometry_editor_panel.set_inputs(inputs, current_bundle=current_bundle)
         self._material_panel.set_inputs(inputs)
         self._refresh_current_design_transfer_states()
 
     def _update_geometry_sandbox_runtime_context(self, inputs: InputParameters | None) -> None:
-        current_bundle = (
-            self._current_bundle
-            if self._current_bundle is not None and inputs is not None and self._current_bundle.inputs == inputs
-            else self._current_bundle
+        preview_inputs = inputs
+        if preview_inputs is not None:
+            preview_overrides = self._draft_geometry_material_preview_updates()
+            if preview_overrides:
+                preview_inputs = replace(preview_inputs, **preview_overrides)
+        # The sandbox always works from one merged preview state: Current Design inputs plus
+        # the still-uncommitted chamber/nozzle/material edits that are currently on screen.
+        preview_bundle = self._build_geometry_preview_bundle(preview_inputs)
+        self._geometry_preview_bundle = preview_bundle
+        runtime_bundle = preview_bundle or self._current_bundle
+        self._chamber_geometry_panel.set_runtime_context(preview_inputs, current_bundle=runtime_bundle)
+        self._geometry_editor_panel.set_runtime_context(preview_inputs, current_bundle=runtime_bundle)
+        if runtime_bundle is not None:
+            preview_separation_point = predict_separation_point(runtime_bundle)
+            self._update_contour_frames_from_bundle(runtime_bundle, separation_point=preview_separation_point)
+            self._geometry_panel.update_results(runtime_bundle)
+            liner_mass_kg = (
+                runtime_bundle.geometry.estimated_liner_mass_kg
+                if self._preview_liner_mass_kg is not None or runtime_bundle is self._current_bundle
+                else None
+            )
+            self._geometry_panel.set_estimated_liner_mass(liner_mass_kg)
+        else:
+            self._geometry_panel.set_estimated_liner_mass(None)
+
+    def _build_geometry_preview_bundle(self, preview_inputs: InputParameters | None) -> ExportBundle | None:
+        """Build a geometry-only preview bundle from sandbox edits and last thermochemistry."""
+
+        if preview_inputs is None or self._current_bundle is None:
+            return None
+        try:
+            # Geometry previews must stay non-destructive: if a draft is temporarily invalid,
+            # we simply skip the preview instead of breaking the rest of the window.
+            preview_bundle = build_geometry_preview_bundle(self._current_bundle, preview_inputs)
+        except (InputValidationError, ValueError, RuntimeError):
+            return None
+        return with_liner_mass(preview_bundle)
+
+    def _update_contour_frames_from_bundle(
+        self,
+        bundle: ExportBundle,
+        *,
+        separation_point: object | None,
+    ) -> None:
+        """Push one contour state into every contour plot at the same time."""
+
+        contour_markers = build_contour_markers(bundle, separation_point)
+        wall_thickness_m = self._resolved_wall_thickness_m(bundle.inputs)
+        self._displayed_contour_bundle = bundle
+        # All contour views consume the same bundle so the user never sees three different
+        # geometry states after editing one sandbox input.
+        self._initial_conditions_plot_frame.update_contour(
+            bundle.contour,
+            bundle.thermochemistry_profile,
+            contour_markers,
+            wall_thickness_m=wall_thickness_m,
         )
-        self._chamber_geometry_panel.set_runtime_context(inputs, current_bundle=current_bundle)
+        self._geometry_plot_frame.update_contour(
+            bundle.contour,
+            bundle.thermochemistry_profile,
+            contour_markers,
+            wall_thickness_m=wall_thickness_m,
+        )
+        self._thermo_contour_plot_frame.update_contour(
+            bundle.contour,
+            bundle.thermochemistry_profile,
+            contour_markers,
+            wall_thickness_m=wall_thickness_m,
+        )
+
+    def _draft_geometry_material_preview_updates(self) -> dict[str, object]:
+        """Collect valid draft nozzle/material overrides for live sandbox previewing."""
+
+        preview_updates: dict[str, object] = {}
+        try:
+            preview_updates.update(self._chamber_geometry_panel.get_live_preview_updates())
+        except InputValidationError:
+            pass
+        try:
+            preview_updates.update(self._geometry_editor_panel.get_geometry_updates())
+        except InputValidationError:
+            pass
+        try:
+            preview_updates.update(self._material_panel.get_material_updates())
+        except InputValidationError:
+            pass
+        return preview_updates
+
+    @staticmethod
+    def _resolved_wall_thickness_m(inputs: InputParameters | None) -> float | None:
+        if inputs is None:
+            return None
+        if inputs.wall_thickness_mode is not WallThicknessMode.CONSTANT:
+            return None
+        if inputs.wall_thickness_m is None or inputs.wall_thickness_m <= 0.0:
+            return None
+        return inputs.wall_thickness_m
 
     def _try_read_initial_inputs(self) -> InputParameters | None:
         try:
@@ -1441,10 +1733,14 @@ class MainWindow(tk.Tk):
 
         clear_calculation_results(self._project_state)
         self._current_bundle = None
+        self._displayed_contour_bundle = None
+        self._geometry_preview_bundle = None
+        self._preview_liner_mass_kg = None
         self._current_separation_point = None
         self._selected_profile_point = None
         self._summary_panel.clear()
         self._geometry_panel.clear()
+        self._geometry_panel.set_estimated_liner_mass(None)
         self._comparison_panel.clear()
         self._input_panel.clear_derived_flow_quantities()
         self._input_panel.clear_performance_preview()
@@ -1468,6 +1764,32 @@ class MainWindow(tk.Tk):
     def _reset_working_geometry_states(self) -> None:
         self._working_geometry_updates = None
         self._working_material_updates = None
+
+    def _reset_current_design_geometry_lock_state(self) -> None:
+        self._current_design_locked_fields = set()
+        self._committed_divergent_loss_factor = None
+        self._committed_divergent_loss_source = None
+        self._preview_liner_mass_kg = None
+        if hasattr(self, "_input_panel"):
+            self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+            self._input_panel.clear_committed_divergent_loss()
+
+    def _add_current_design_field_locks(self, *field_keys: str) -> None:
+        self._current_design_locked_fields.update(field_keys)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+
+    def _set_committed_divergent_loss(
+        self,
+        *,
+        divergent_loss_factor: float | None,
+        source_text: str | None,
+    ) -> None:
+        self._committed_divergent_loss_factor = divergent_loss_factor
+        self._committed_divergent_loss_source = source_text
+        self._input_panel.set_committed_divergent_loss(
+            divergent_loss_factor=divergent_loss_factor,
+            source_text=source_text,
+        )
 
     def _reset_initial_design_lock_state(self) -> None:
         self._initial_design_locked = False

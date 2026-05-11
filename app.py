@@ -45,6 +45,9 @@ class EngineDesignApplication:
             bell_variant=effective_inputs.bell_variant,
             manual_nozzle_length_m=effective_inputs.manual_nozzle_length_m,
             convergent_half_angle_deg=effective_inputs.convergent_half_angle_deg,
+            throat_upstream_radius_m=effective_inputs.throat_upstream_radius_m,
+            throat_downstream_radius_m=effective_inputs.throat_downstream_radius_m,
+            chamber_corner_radius_m=effective_inputs.chamber_corner_radius_m,
             include_diverging_section=flow_case.flow_case is FlowCase.CHOKED_SUPERSONIC,
         )
         thermochemistry_profile = build_thermochemistry_profile(contour, geometry, thermo)
@@ -57,6 +60,15 @@ class EngineDesignApplication:
             thermochemistry_profile=thermochemistry_profile,
             of_sweep=of_sweep,
         )
+
+    def estimate_ambient_matched_expansion_ratio(
+        self,
+        inputs: InputParameters,
+    ) -> float | None:
+        """Return a preliminary ambient-matched Ae/At estimate for the current operating point."""
+
+        ensure_valid_input(inputs)
+        return self._backend.estimate_ambient_matched_expansion_ratio(inputs)
 
     def build_of_sweep(self, inputs: InputParameters) -> OFSweepResult:
         """Build only the O/F sweep for the selected propellant pair."""
