@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">AstraForge icon</title>
+  <desc id="desc">Black square with a white four-point star and a half rocket-liner contour.</desc>
+  <rect width="256" height="256" rx="28" fill="#000000"/>
+  <path
+    d="M128 26 L141 102 L217 115 L141 128 L128 204 L115 128 L39 115 L115 102 Z"
+    fill="#ffffff"
+  />
+  <path
+    d="M166 56
+       C148 72 136 96 133 120
+       C130 143 130 166 126 196"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="14"
+    stroke-linecap="round"
+  />
+  <path
+    d="M180 62
+       C161 80 148 103 144 126
+       C141 147 141 168 138 190"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="6"
+    stroke-linecap="round"
+  />
+</svg>
