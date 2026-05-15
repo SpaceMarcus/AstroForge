@@ -1,36 +1,56 @@
 # AstraForge
 
-This project is a local Python desktop application for the early predesign of a
-regeneratively cooled LOX/RP-1 rocket engine. The codebase keeps the main
-concerns separated:
+AstraForge is a local Python desktop application for early liquid rocket engine
+predesign. The current focus is a practical predesign workflow for a
+regeneratively cooled LOX/RP-1 class engine with:
+
+- RocketCEA-backed thermochemistry
+- chamber / throat / nozzle geometry predesign
+- Current Design vs. Geometry sandbox separation
+- contour generation and export
+- annulus-cooling thermal-analysis MVP
+
+The codebase keeps the main concerns separated:
 
 - `engine/models.py` contains the shared SI-based dataclasses and enums.
 - `engine/chemistry/` hides RocketCEA behind a dedicated backend interface.
-- `engine/geometry/` sizes the engine and generates/exportable nozzle contours.
+- `engine/geometry/` sizes the engine and generates/exportable contours.
+- `engine/thermal_analysis.py` contains the station-wise cooling MVP solver.
 - `engine/io/` handles JSON and CSV exports.
 - `engine/gui/` provides the Tkinter desktop interface and matplotlib plots.
 
 ## Project Goal
 
-The application accepts engine starting values such as fuel, oxidizer, chamber
-pressure, thrust, mixture ratio, expansion ratio, ambient pressure, optional
-`Ac/At`, optional `L*`, chemistry mode and contour method. It then computes:
+The application accepts engine starting values such as:
+
+- fuel / oxidizer
+- chamber pressure
+- thrust
+- mixture ratio
+- ambient pressure
+- chemistry mode
+- contour family
+- optional chamber / nozzle overrides
+
+It then computes:
 
 - RocketCEA thermochemistry for `equilibrium`, `frozen` and `frozen-at-throat`
 - first-order performance values such as `Tc`, `c*`, `Isp` and `Cf`
-- a preliminary chamber/nozzle geometry with `At`, `Ae`, `rt`, `re`, optional
-  `Ac`, `rc`, chamber length and mass flow
-- a discretized contour `r(x)` for plotting and export
-- station-based thermochemistry profiles from chamber, throat and exit states
-- a clickable O/F sweep for vacuum Isp or `c*`
-- approximate adiabatic wall temperature and boundary-layer thickness values
+- a preliminary chamber/nozzle geometry with `At`, `Ae`, `rt`, `re`, `Ac`,
+  chamber length and mass flow
+- discretized `r(x)` contours for plotting, inspection and export
+- station-based thermochemistry profiles from chamber to exit
+- clickable O/F sweeps
+- preliminary chamber / throat / TOP nozzle design helpers
+- station-wise annulus-cooling thermal-analysis reference results
 
 ## Branding
 
 - The desktop GUI uses the visible application name `AstraForge`.
-- The project ships an icon asset at `assets/astraforge_icon.svg`.
-- Tkinter window-icon support for SVG assets is platform-dependent, so the SVG
-  asset is included directly and can also be reused later for EXE branding.
+- The source repository keeps the base vector asset at `assets/astraforge_icon.svg`.
+- The current desktop app and EXE branding use:
+  - `assets/astraforge_logo.png`
+  - `assets/astraforge_taskbar.ico`
 
 ## Python Version
 
@@ -58,9 +78,9 @@ python -m pip install -r requirements.txt
 The application uses RocketCEA only inside
 `engine/chemistry/rocketcea_backend.py`.
 
-- If RocketCEA is installed and importable, the application uses real CEA data.
-- If RocketCEA is missing or cannot be imported, the application does not crash.
-  A readable error message is shown in the CLI or GUI.
+- If RocketCEA is installed and importable, AstraForge uses real CEA data.
+- If RocketCEA is missing or cannot be imported, the application shows a
+  readable error instead of crashing silently.
 - The packaged EXE bundles the RocketCEA files it needs at runtime, including
   package data and Python source files that RocketCEA opens directly.
 
@@ -91,29 +111,118 @@ python -m pip install pyinstaller
 powershell -ExecutionPolicy Bypass -File .\build_gui_exe.ps1
 ```
 
-The resulting executable is written to `dist\RocketEnginePredesign.exe`.
+The latest executable is written to:
+
+- `dist\AstraForge.exe`
+- plus a timestamped copy such as `dist\AstraForge_vYYYYMMDD_HHMMSS.exe`
 
 ## GUI Tabs
 
-The current GUI is organized into five tabs:
+The current GUI is organized into these tabs:
 
-1. `Overview`
-   - editable inputs
-   - calculate / load example / export all / clear errors
-   - mixture-ratio sweep
-   - species and notes panel
-   - interactive contour plot with throat, exit, optimal-expansion and separation markers
-2. `Geometry and Material`
-   - geometry summary
-   - dedicated geometry JSON / CSV export
-   - prepared liner-material and coating inputs
-   - second contour view for local point inspection
-3. `Thermochemie`
-   - dominant mass fractions along the nozzle axis
-4. `Comparison`
-   - reference conical / best variant yet / current nozzle comparison baseline
-5. `Report`
-   - placeholder tab prepared for structured AstraForge reports
+1. `Project Management`
+   - project mode switch
+   - optional mission / requirement / budget context
+   - guided-project vs. sandbox behavior
+
+2. `Overview`
+   - compact dashboard summary
+   - module-status overview
+   - MBSE-style project context display
+
+3. `Initial Design`
+   - baseline starting inputs
+   - first setup before committing a Current Design
+
+4. `Current Design`
+   - active design state
+   - performance preview
+   - derived flow quantities
+   - plausibility checks
+   - thermochemistry/performance run state
+
+5. `Geometry and Material`
+   - chamber section
+   - throat section
+   - nozzle section
+   - liner material section
+   - geometry contour, preview tools and geometry summary
+
+6. `Thermal Analysis`
+   - annulus-cooling MVP reference model
+   - read-only committed design context
+   - solver settings
+   - pressure reconstruction for pump-fed predesign
+   - station result table
+   - separate plot window with export
+
+7. `Comparison`
+   - reference / current comparison baseline
+
+8. `Report`
+   - prepared placeholder for structured AstraForge report output
+
+## Current Design and Geometry Workflow
+
+The app intentionally separates three roles:
+
+- `Initial Design`
+  - editable baseline used to seed the first committed design
+- `Current Design`
+  - committed active design state
+- `Geometry and Material`
+  - sandbox/editor for chamber, throat, nozzle and liner decisions
+
+Geometry changes are intentionally explicit:
+
+- sandbox edits do not silently overwrite committed Current Design values
+- selected geometry decisions can be pushed into Current Design
+- some Current Design fields become read-only once geometry has been committed
+  from the dedicated Geometry tab
+
+## Chamber / Nozzle Predesign Features
+
+The geometry workflow currently supports:
+
+- chamber `L*` selection with justification and commit workflow
+- chamber `Ac/At` selection with justification and commit workflow
+- throat upstream / downstream blend-radius editing
+- TOP / Rao bell-angle support through `pygasflow`
+- conical and bell contour families
+- bell-length handling by manual length or `Lf [%]`
+- preliminary divergent-loss handling for nozzle decisions
+
+## Thermal Analysis MVP
+
+The current thermal-analysis module is intentionally an MVP reference model.
+
+What it does:
+
+- uses the currently available contour / geometry state
+- builds stations along the inner wall
+- applies an annulus-cooling reference model
+- computes station-wise coolant temperature rise, wall temperatures, heat pickup
+  and cooling-side pressure drop
+- reconstructs required cooling inlet pressure and required pump discharge
+  pressure for pump-fed predesign
+
+What it currently shows:
+
+- read-only design context
+- annulus gap, roughness, flow direction and pressure assumptions
+- solver settings
+- station result table
+- separate plot window with selectable `x` / `y` quantities
+- plot export as `CSV`, `TXT`, `PNG` and `SVG`
+
+Important current assumptions:
+
+- only the annulus reference model is active
+- detailed channel cooling is planned for a later version
+- spacer ribs are shown only as a mechanical assumption and are not included in
+  the MVP calculation
+- cooling-side correlations assume fully developed annular flow
+- this is acceptable for MVP predesign, but still a simplifying assumption
 
 ## Default Example Values
 
@@ -141,67 +250,80 @@ The full-case export writes:
 - `*_contour.csv`
 - `*_thermo_profile.csv`
 
-The geometry tab also offers dedicated geometry-only exports:
+The geometry workflow also offers dedicated geometry exports:
 
-- `*_geometry.json` style JSON output with geometry plus contour
-- `*_geometry.csv` style contour CSV output
+- geometry JSON with contour and geometry state
+- geometry CSV for discretized contour output
 
-The thermochemistry profile CSV includes local:
+The thermal plot window also supports export of the currently shown plot as:
 
-- adiabatic wall temperature
-- velocity boundary-layer thickness
-- thermal boundary-layer thickness
-- local velocity and Reynolds number
-- species mass and mole fractions
+- `CSV`
+- `TXT`
+- `PNG`
+- `SVG`
 
 The GUI export dialogs use the `outputs/` directory by default.
 
 ## Important Simplifications
 
-This version intentionally targets a robust predesign workflow, not a full
-engine simulation:
+This version intentionally targets a robust predesign workflow, not a final
+engine design tool.
 
 - no custom chemical equilibrium solver
-- no complete Bray or mixed-flow physics model
-- no cooling-channel calculation
-- no structural or liner stress model
-- no 2D/3D heat-conduction model
+- no full channel-by-channel regenerative cooling solver yet
+- no detailed rib/spacer thermal-hydraulic model yet
+- no full structural or liner stress model
+- no 2D/3D conjugate heat-conduction model
+- no complete injector-face thermal model yet
 - no aerospike implementation yet
-- first-order sizing with `At = F / (Cf * Pc)`
-- chamber length as an equivalent cylindrical length derived from `L*`
-- contour families currently include `Conical`, `Bell` and a visible future `Aerospike` option
-- within `Bell`, only `Parabola` is numerically implemented right now
-- `TIC` and `TOC` are prepared in the UI but intentionally blocked until dedicated geometry logic is added
-- RocketCEA does not choose the contour type; RocketCEA provides chemistry,
-  while the contour is generated in `engine/geometry/contour.py`
-- local profile values along `x` are based on exact RocketCEA chamber/throat/exit
-  stations plus interpolation between them
-- adiabatic wall temperature and boundary-layer thickness values use a simple
-  turbulent boundary-layer approximation and should be treated as engineering
-  estimates
-- the current separation marker uses a first-order Summerfield-style wall-pressure criterion
+- first-order sizing remains central to the workflow
+- chamber length is still based on equivalent `L*`-driven predesign logic
+- contour families currently include `Conical`, `Bell` and a visible future
+  `Aerospike` option
+- within `Bell`, only `Parabola` is numerically active right now
+- `TIC` and `TOC` are visible as future work but intentionally not implemented
+- thermal-analysis results are suitable for trend and predesign work, not final
+  certification-level thermal design
+- the current chamber/head-end heat-flux treatment is still a predesign
+  approximation and should be reviewed critically
 
 ## Architecture and Future Extensions
 
-The current structure is set up so later additions can be attached cleanly:
+The current structure is set up so later additions can attach cleanly:
 
-- Bartz heat-transfer correlations can attach to the contour/profile layer
-- Bray or mixed-flow logic can be added above the thermochemistry interface
-- regenerative cooling can build on `GeometryResult`, `NozzlePoint` and the
-  local profile states
-- aerospike support can be added later as another contour family without having
-  to break the RocketCEA backend boundary
+- more detailed heat-transfer correlations can attach to the contour/profile
+  layer
+- full regenerative channel cooling can build on the current thermal-analysis
+  interfaces
+- more detailed TOP / TIC / TOC nozzle construction can extend the dedicated
+  nozzle-geometry helpers
+- aerospike support can be added later as another contour family without
+  breaking the RocketCEA boundary
 
 ## Project Structure
 
 ```text
 project_root/
   app.py
+  gui_launcher.py
+  build_gui_exe.ps1
+  RocketEnginePredesign.spec
   requirements.txt
   README.md
+  assets/
+    astraforge_icon.svg
+    astraforge_logo.png
+    astraforge_taskbar.ico
   engine/
     __init__.py
     models.py
+    performance_preview.py
+    project_state.py
+    thermal_analysis.py
+    geometry_preview.py
+    nozzle_geometry.py
+    nozzle_preview.py
+    chamber_geometry.py
     chemistry/
       __init__.py
       base.py
@@ -210,22 +332,27 @@ project_root/
       __init__.py
       sizing.py
       contour.py
+      separation.py
     gui/
       __init__.py
       main_window.py
       input_panel.py
       result_panel.py
       plotting.py
+      project_panels.py
+      chamber_geometry_panel.py
+      thermal_analysis_page.py
     io/
       __init__.py
       export.py
+      preset.py
     utils/
       __init__.py
       validation.py
   tests/
-    test_sizing.py
-    test_validation.py
-    test_rocketcea_backend.py
-    test_export.py
     test_app_service.py
+    test_export.py
+    test_nozzle_preview.py
+    test_performance_preview.py
+    test_thermal_analysis.py
 ```
