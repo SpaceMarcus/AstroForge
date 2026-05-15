@@ -4,12 +4,14 @@ from app import EngineDesignApplication, build_example_inputs
 from engine.chemistry.base import ThermochemistryBackend
 from engine.models import (
     ChemistryMode,
+    ExportBundle,
     InputParameters,
     OFSweepPoint,
     OFSweepResult,
     ThermochemistryResult,
     ThermochemistryState,
 )
+from engine.thermal_analysis import ThermalAnalysisInputs
 
 
 class FakeBackend(ThermochemistryBackend):
@@ -90,3 +92,19 @@ def test_application_exposes_ambient_matched_expansion_ratio_estimate() -> None:
     estimate = application.estimate_ambient_matched_expansion_ratio(build_example_inputs())
 
     assert estimate == 15.5
+
+
+def test_application_exposes_thermal_analysis_runner() -> None:
+    application = EngineDesignApplication(backend=FakeBackend())
+    bundle: ExportBundle = application.run_case(build_example_inputs())
+
+    result = application.run_thermal_analysis(
+        bundle,
+        ThermalAnalysisInputs(
+            coolant_mass_flow_kg_per_s=9.0,
+            coolant_type="RP-1",
+        ),
+    )
+
+    assert result.summary.total_heat_into_coolant_w is not None
+    assert len(result.stations) > 0

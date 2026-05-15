@@ -16,6 +16,7 @@ from engine.flow import FlowCase, adapt_inputs_for_flow_case, classify_input_flo
 from engine.geometry import build_thermochemistry_profile, generate_nozzle_contour, size_engine_geometry
 from engine.io import export_bundle, export_geometry_to_csv, export_geometry_to_json
 from engine.models import BellContourVariant, ChemistryMode, ExportBundle, InputParameters, OFSweepResult
+from engine.thermal_analysis import ThermalAnalysisInputs, ThermalAnalysisResult, run_thermal_analysis
 from engine.unit_system import UnitPreset
 from engine.utils.validation import InputValidationError, ensure_valid_input
 
@@ -77,6 +78,15 @@ class EngineDesignApplication:
         return self._backend.build_of_sweep(
             adapt_inputs_for_flow_case(inputs, classify_input_flow_case(inputs))
         )
+
+    def run_thermal_analysis(
+        self,
+        bundle: ExportBundle,
+        thermal_inputs: ThermalAnalysisInputs,
+    ) -> ThermalAnalysisResult:
+        """Run the annulus-cooling reference model on the committed Current Design bundle."""
+
+        return run_thermal_analysis(bundle, thermal_inputs)
 
     def export_case(
         self,

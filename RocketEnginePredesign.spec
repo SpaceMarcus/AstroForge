@@ -17,6 +17,10 @@ datas = collect_data_files("matplotlib") + collect_data_files(
     "rocketcea",
     include_py_files=True,
 )
+datas += [
+    (str(Path("assets") / "astraforge_logo.png"), "assets"),
+    (str(Path("assets") / "astraforge_taskbar.ico"), "assets"),
+]
 # Rao_Parabola_Angles reads digitized chart files directly from disk at runtime.
 # Bundle that chart-data directory explicitly so the EXE can resolve it from _MEIPASS.
 _rao_data_dir = Path(rao_parabola_angles.__file__).resolve().parent / "plot-4-16-data"
@@ -70,4 +74,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(Path("assets") / "astraforge_taskbar.ico"),
 )

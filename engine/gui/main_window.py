@@ -17,7 +17,7 @@ from engine.geometry import build_contour_markers, predict_separation_point
 from engine.geometry_preview import build_geometry_preview_bundle, with_liner_mass
 from engine.gui.chamber_geometry_panel import ChamberGeometryPanel
 from engine.gui.input_panel import InputPanel
-from engine.gui.plotting import ContourPlotFrame, OFSweepPlotFrame, SpeciesProfilePlotFrame
+from engine.gui.plotting import ContourPlotFrame, OFSweepPlotFrame
 from engine.gui.project_panels import (
     DashboardSummaryPanel,
     FlowCasePanel,
@@ -32,6 +32,7 @@ from engine.gui.result_panel import (
     MaterialOptionsPanel,
     SummaryPanel,
 )
+from engine.gui.thermal_analysis_page import ThermalAnalysisPage
 from engine.io import export_engine_preset, load_engine_preset
 from engine.models import (
     ExportBundle,
@@ -55,6 +56,11 @@ from engine.project_state import (
     mark_design_inputs_changed,
     set_project_mode,
     set_flow_case_assessment,
+)
+from engine.thermal_analysis import (
+    ThermalAnalysisInputs,
+    ThermalAnalysisResult,
+    default_thermal_analysis_inputs,
 )
 from engine.unit_system import UnitPreset, UNIT_PRESET_LABELS, format_quantity
 from engine.utils.validation import InputValidationError
@@ -91,6 +97,12 @@ class ApplicationController(Protocol):
         unit_preset: UnitPreset = UnitPreset.SI,
     ) -> Path: ...
 
+    def run_thermal_analysis(
+        self,
+        bundle: ExportBundle,
+        thermal_inputs: ThermalAnalysisInputs,
+    ) -> ThermalAnalysisResult: ...
+
 
 class MainWindow(tk.Tk):
     """Desktop GUI with dashboard, project setup and engineering tabs."""
@@ -101,6 +113,8 @@ class MainWindow(tk.Tk):
         example_input_factory: Callable[[], InputParameters],
     ) -> None:
         super().__init__()
+        self._window_icon_image: tk.PhotoImage | None = None
+        self._configure_application_icon()
         self.title("AstraForge")
         self.geometry("1460x980")
         self.minsize(1200, 860)
@@ -127,6 +141,14 @@ class MainWindow(tk.Tk):
         self._committed_divergent_loss_factor: float | None = None
         self._committed_divergent_loss_source: str | None = None
         self._preview_liner_mass_kg: float | None = None
+        self._thermal_analysis_inputs = default_thermal_analysis_inputs()
+        self._thermal_analysis_result: ThermalAnalysisResult | None = None
+        self._thermal_auto_seeded_coolant_mass_flow_kg_per_s = (
+            self._thermal_analysis_inputs.coolant_mass_flow_kg_per_s
+        )
+        self._thermal_auto_seeded_inlet_temperature_k = (
+            self._thermal_analysis_inputs.coolant_inlet_temperature_k
+        )
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -143,6 +165,74 @@ class MainWindow(tk.Tk):
         self._build_layout()
         self._apply_project_state_to_ui(reset_project_data=True)
         self.load_example_values(clear_results=True)
+
+    def _configure_application_icon(self) -> None:
+        """Load the shared AstraForge logo for the title bar and taskbar.
+
+        The EXE already carries the same ICO through PyInstaller. This runtime
+        hook keeps the source-run experience aligned with the packaged app and
+        also gives Tk a PNG fallback when ICO loading is environment-dependent.
+        """
+
+        logo_png = _resolve_runtime_asset_path("assets/astraforge_logo.png")
+        icon_ico = _resolve_runtime_asset_path("assets/astraforge_taskbar.ico")
+
+        if logo_png.exists():
+            try:
+                self._window_icon_image = tk.PhotoImage(file=str(logo_png))
+                self.iconphoto(True, self._window_icon_image)
+            except Exception:
+                self._window_icon_image = None
+
+        if icon_ico.exists():
+            try:
+                self.iconbitmap(default=str(icon_ico))
+            except Exception:
+                pass
+            # Tk's higher-level icon setters are not always enough for the
+            # Windows taskbar. Schedule a native WM_SETICON pass once the root
+            # window exists so title bar and taskbar use the same ICO resource.
+            self.after(0, lambda: self._apply_native_windows_icon(icon_ico))
+
+    def _apply_native_windows_icon(self, icon_path: Path) -> None:
+        """Apply the ICO directly to the native Windows window handle."""
+
+        if not sys.platform.startswith("win") or not icon_path.exists():
+            return
+        try:
+            import ctypes
+
+            image_icon = 1
+            icon_small = 0
+            icon_big = 1
+            wm_seticon = 0x0080
+            lr_loadfromfile = 0x0010
+            lr_defaultsize = 0x0040
+
+            user32 = ctypes.windll.user32
+            handle = self.winfo_id()
+            big_icon = user32.LoadImageW(
+                0,
+                str(icon_path),
+                image_icon,
+                256,
+                256,
+                lr_loadfromfile | lr_defaultsize,
+            )
+            small_icon = user32.LoadImageW(
+                0,
+                str(icon_path),
+                image_icon,
+                32,
+                32,
+                lr_loadfromfile | lr_defaultsize,
+            )
+            if big_icon:
+                user32.SendMessageW(handle, wm_seticon, icon_big, big_icon)
+            if small_icon:
+                user32.SendMessageW(handle, wm_seticon, icon_small, small_icon)
+        except Exception:
+            pass
 
     def _build_menu(self) -> None:
         menu_bar = tk.Menu(self)
@@ -238,7 +328,7 @@ class MainWindow(tk.Tk):
         thermo_tab = ttk.Frame(notebook, padding=8)
         thermo_tab.columnconfigure(0, weight=1)
         thermo_tab.rowconfigure(0, weight=1)
-        notebook.add(thermo_tab, text="Thermo Chemistry")
+        notebook.add(thermo_tab, text="Thermal Analysis")
 
         comparison_tab = ttk.Frame(notebook, padding=8)
         comparison_tab.columnconfigure(0, weight=1)
@@ -604,17 +694,11 @@ class MainWindow(tk.Tk):
     def _build_thermo_tab(self, master: ttk.Frame) -> None:
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
-        master.rowconfigure(1, weight=1)
 
-        self._species_plot_frame = SpeciesProfilePlotFrame(master, unit_preset=self._unit_preset)
-        self._species_plot_frame.grid(row=0, column=0, sticky="nsew")
-
-        self._thermo_contour_plot_frame = ContourPlotFrame(
-            master,
-            on_point_selected=self._on_profile_point_selected,
-            unit_preset=self._unit_preset,
-        )
-        self._thermo_contour_plot_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        self._thermal_analysis_page = ThermalAnalysisPage(master, unit_preset=self._unit_preset)
+        self._thermal_analysis_page.grid(row=0, column=0, sticky="nsew")
+        self._thermal_analysis_page.bind_calculate(self.calculate_thermal_analysis)
+        self._thermal_analysis_page.bind_reset(self.reset_thermal_analysis_inputs)
 
     def _build_comparison_tab(self, master: ttk.Frame) -> None:
         self._comparison_panel = ComparisonPanel(master, unit_preset=self._unit_preset)
@@ -691,6 +775,11 @@ class MainWindow(tk.Tk):
         self._input_panel.set_inputs(example)
         self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
         self._input_panel.clear_committed_divergent_loss()
+        self._thermal_analysis_inputs = default_thermal_analysis_inputs(None, fuel_name=example.fuel)
+        self._thermal_analysis_result = None
+        self._update_thermal_auto_seed_tracking(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.clear_result()
         self._seed_geometry_sandbox_from_inputs(example)
         self._refresh_flow_case_assessment(example)
         self._selected_of_var.set(f"{example.mixture_ratio:.4f}")
@@ -701,6 +790,7 @@ class MainWindow(tk.Tk):
             mark_design_inputs_changed(self._project_state)
             self._refresh_of_sweep_plot()
             self._refresh_dashboard_views()
+        self._refresh_thermal_analysis_context()
         self._status_var.set("Example values loaded.")
 
     def copy_initial_design_to_current_design(self) -> None:
@@ -802,7 +892,7 @@ class MainWindow(tk.Tk):
         self._comparison_panel.update_results(bundle, self._current_separation_point)
         self._summary_panel.show_default_summary(bundle)
         self._update_contour_frames_from_bundle(bundle, separation_point=self._current_separation_point)
-        self._species_plot_frame.update_profile(bundle.thermochemistry_profile)
+        self._refresh_thermal_analysis_context()
         mark_calculation_success(self._project_state)
         self._refresh_flow_case_assessment(inputs, gamma=bundle.thermochemistry.gamma)
         self._refresh_of_sweep_plot()
@@ -811,6 +901,48 @@ class MainWindow(tk.Tk):
             self._mark_initial_design_executed(self._pending_initial_design_lock_inputs)
             self._pending_initial_design_lock_inputs = None
         self._status_var.set("Calculation completed successfully.")
+
+    def calculate_thermal_analysis(self) -> None:
+        """Run the annulus-cooling reference model on the committed Current Design."""
+
+        self.reset_error()
+        analysis_bundle = self._geometry_preview_bundle or self._current_bundle
+        if analysis_bundle is None:
+            self._error_var.set("Calculate Current Design first so Thermal Analysis has committed geometry and thermochemistry data.")
+            self._status_var.set("Thermal Analysis not possible yet.")
+            return
+        try:
+            thermal_inputs = self._thermal_analysis_page.get_inputs()
+            result = self._controller.run_thermal_analysis(analysis_bundle, thermal_inputs)
+        except (InputValidationError, ThermochemistryBackendError, ValueError) as exc:
+            self._error_var.set(str(exc))
+            self._status_var.set("Thermal Analysis failed.")
+            return
+        except Exception as exc:  # pragma: no cover - GUI integration safeguard
+            self._error_var.set(f"Unexpected thermal-analysis error: {exc}")
+            self._status_var.set("Thermal Analysis failed.")
+            return
+
+        self._thermal_analysis_inputs = thermal_inputs
+        self._thermal_analysis_result = result
+        self._thermal_analysis_page.show_result(result)
+        self._refresh_thermal_analysis_context()
+        self._status_var.set("Thermal Analysis completed successfully.")
+
+    def reset_thermal_analysis_inputs(self) -> None:
+        """Reset thermal-reference inputs back to the current design defaults."""
+
+        current_inputs = self._try_read_current_inputs()
+        self._thermal_analysis_inputs = default_thermal_analysis_inputs(
+            self._current_bundle,
+            fuel_name=None if current_inputs is None else current_inputs.fuel,
+        )
+        self._thermal_analysis_result = None
+        self._update_thermal_auto_seed_tracking(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.clear_result()
+        self._refresh_thermal_analysis_context()
+        self._status_var.set("Thermal Analysis inputs were reset to their reference defaults.")
 
     def export_results(self) -> None:
         """Export the currently displayed result bundle to JSON and CSV."""
@@ -1058,6 +1190,7 @@ class MainWindow(tk.Tk):
             self._refresh_flow_case_assessment(initial_inputs)
             self._selected_of_var.set(f"{initial_inputs.mixture_ratio:.4f}")
             self._selected_sweep_mixture_ratio = initial_inputs.mixture_ratio
+            self._refresh_thermal_analysis_context()
 
     def _on_initial_design_chemistry_mode_changed(self, _event: object) -> None:
         self._status_var.set(
@@ -1077,6 +1210,7 @@ class MainWindow(tk.Tk):
         mark_design_inputs_changed(self._project_state)
         self._refresh_flow_case_assessment(current_inputs)
         self._update_geometry_sandbox_runtime_context(current_inputs)
+        self._refresh_thermal_analysis_context()
         self._refresh_dashboard_views()
 
     def store_working_material_geometry(self) -> None:
@@ -1313,6 +1447,7 @@ class MainWindow(tk.Tk):
         self._selected_sweep_mixture_ratio = updated_inputs.mixture_ratio
         mark_design_inputs_changed(self._project_state)
         self._refresh_of_sweep_plot()
+        self._refresh_thermal_analysis_context()
         self._refresh_dashboard_views()
         self._status_var.set(status_message)
 
@@ -1437,20 +1572,22 @@ class MainWindow(tk.Tk):
         self._comparison_panel.set_unit_preset(unit_preset)
         self._initial_conditions_plot_frame.set_unit_preset(unit_preset)
         self._geometry_plot_frame.set_unit_preset(unit_preset)
-        self._species_plot_frame.set_unit_preset(unit_preset)
-        self._thermo_contour_plot_frame.set_unit_preset(unit_preset)
         self._of_sweep_plot.set_unit_preset(unit_preset)
+        self._thermal_analysis_page.set_unit_preset(unit_preset)
         self._update_of_summary()
         if self._current_bundle is not None:
             if self._selected_profile_point is not None:
                 self._summary_panel.show_profile_point(self._selected_profile_point, self._current_bundle)
             else:
                 self._summary_panel.show_default_summary(self._current_bundle)
+        if self._thermal_analysis_result is not None:
+            self._thermal_analysis_page.show_result(self._thermal_analysis_result)
         initial_inputs = self._try_read_initial_inputs()
         self._refresh_initial_flow_case_assessment(initial_inputs)
         current_inputs = self._try_read_current_inputs()
         if current_inputs is not None:
             self._update_geometry_sandbox_runtime_context(current_inputs)
+        self._refresh_thermal_analysis_context()
         self._refresh_dashboard_views()
 
     def _apply_project_state_to_ui(self, *, reset_project_data: bool) -> None:
@@ -1486,6 +1623,73 @@ class MainWindow(tk.Tk):
             bundle=current_bundle,
             current_inputs=current_inputs,
         )
+
+    def _refresh_thermal_analysis_context(self) -> None:
+        """Refresh the read-only design context shown on the thermal-analysis page."""
+
+        current_inputs = self._try_read_current_inputs()
+        analysis_bundle = self._geometry_preview_bundle or self._current_bundle
+        geometry_source_label = (
+            "Geometry & Material preview"
+            if self._geometry_preview_bundle is not None
+            else "Committed Current Design"
+        )
+        if self._current_bundle is not None or current_inputs is not None:
+            seeded_inputs = default_thermal_analysis_inputs(
+                self._current_bundle,
+                fuel_name=None if current_inputs is None else current_inputs.fuel,
+            )
+            push_inputs_to_page = False
+
+            # Coolant type is design-context driven and no longer edited locally on
+            # the thermal page, so it should always follow the current fuel choice.
+            if self._thermal_analysis_inputs.coolant_type != seeded_inputs.coolant_type:
+                self._thermal_analysis_inputs.coolant_type = seeded_inputs.coolant_type
+                push_inputs_to_page = True
+
+            # If the user has not overridden coolant mass flow since the last auto
+            # seeding step, keep it synchronized with the latest Current Design.
+            if self._thermal_analysis_inputs.coolant_mass_flow_kg_per_s is None or _optional_float_close(
+                self._thermal_analysis_inputs.coolant_mass_flow_kg_per_s,
+                self._thermal_auto_seeded_coolant_mass_flow_kg_per_s,
+            ):
+                self._thermal_analysis_inputs.coolant_mass_flow_kg_per_s = (
+                    seeded_inputs.coolant_mass_flow_kg_per_s
+                )
+                self._thermal_auto_seeded_coolant_mass_flow_kg_per_s = (
+                    seeded_inputs.coolant_mass_flow_kg_per_s
+                )
+                push_inputs_to_page = True
+
+            # Inlet temperature should likewise keep following the default coolant
+            # assumption until the user consciously overrides it on the thermal page.
+            if _optional_float_close(
+                self._thermal_analysis_inputs.coolant_inlet_temperature_k,
+                self._thermal_auto_seeded_inlet_temperature_k,
+            ):
+                self._thermal_analysis_inputs.coolant_inlet_temperature_k = (
+                    seeded_inputs.coolant_inlet_temperature_k
+                )
+                self._thermal_auto_seeded_inlet_temperature_k = (
+                    seeded_inputs.coolant_inlet_temperature_k
+                )
+                push_inputs_to_page = True
+
+            if push_inputs_to_page:
+                self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.update_design_context(
+            current_inputs=current_inputs,
+            current_bundle=analysis_bundle,
+            thermal_inputs=self._thermal_analysis_inputs,
+            geometry_source_label=geometry_source_label,
+            profile_station_count=None if analysis_bundle is None else max(len(analysis_bundle.thermochemistry_profile) - 1, 0),
+        )
+
+    def _update_thermal_auto_seed_tracking(self, inputs: ThermalAnalysisInputs) -> None:
+        """Remember the latest auto-seeded thermal defaults for later sync checks."""
+
+        self._thermal_auto_seeded_coolant_mass_flow_kg_per_s = inputs.coolant_mass_flow_kg_per_s
+        self._thermal_auto_seeded_inlet_temperature_k = inputs.coolant_inlet_temperature_k
 
     def _refresh_flow_case_assessment(
         self,
@@ -1545,6 +1749,7 @@ class MainWindow(tk.Tk):
         self._selected_sweep_mixture_ratio = inputs.mixture_ratio
         mark_design_inputs_changed(self._project_state)
         self._refresh_of_sweep_plot()
+        self._refresh_thermal_analysis_context()
         self._refresh_dashboard_views()
         if select_current_tab:
             self._notebook.select(self._current_design_tab)
@@ -1641,12 +1846,6 @@ class MainWindow(tk.Tk):
             contour_markers,
             wall_thickness_m=wall_thickness_m,
         )
-        self._thermo_contour_plot_frame.update_contour(
-            bundle.contour,
-            bundle.thermochemistry_profile,
-            contour_markers,
-            wall_thickness_m=wall_thickness_m,
-        )
 
     def _draft_geometry_material_preview_updates(self) -> dict[str, object]:
         """Collect valid draft nozzle/material overrides for live sandbox previewing."""
@@ -1738,6 +1937,7 @@ class MainWindow(tk.Tk):
         self._preview_liner_mass_kg = None
         self._current_separation_point = None
         self._selected_profile_point = None
+        self._thermal_analysis_result = None
         self._summary_panel.clear()
         self._geometry_panel.clear()
         self._geometry_panel.set_estimated_liner_mass(None)
@@ -1746,8 +1946,7 @@ class MainWindow(tk.Tk):
         self._input_panel.clear_performance_preview()
         self._initial_conditions_plot_frame.update_contour([], [], [])
         self._geometry_plot_frame.update_contour([], [], [])
-        self._species_plot_frame.update_profile([])
-        self._thermo_contour_plot_frame.update_contour([], [], [])
+        self._thermal_analysis_page.clear_result()
         self._of_sweep_plot.update_sweep(
             None,
             metric=OFSweepMetric(self._of_metric_var.get()),
@@ -1759,6 +1958,7 @@ class MainWindow(tk.Tk):
         current_inputs = self._try_read_current_inputs()
         if current_inputs is not None:
             self._update_geometry_sandbox_runtime_context(current_inputs)
+        self._refresh_thermal_analysis_context()
         self._refresh_dashboard_views()
 
     def _reset_working_geometry_states(self) -> None:
@@ -1872,3 +2072,24 @@ class MainWindow(tk.Tk):
 
         self._last_preset_path = Path(path)
         self._status_var.set(f"Engine preset saved to {path.name}.")
+
+
+def _optional_float_close(
+    left_value: float | None,
+    right_value: float | None,
+    *,
+    rel_tol: float = 1.0e-9,
+    abs_tol: float = 1.0e-9,
+) -> bool:
+    """Compare two optional floats while treating two missing values as equal."""
+
+    if left_value is None or right_value is None:
+        return left_value is right_value
+    return math.isclose(left_value, right_value, rel_tol=rel_tol, abs_tol=abs_tol)
+
+
+def _resolve_runtime_asset_path(relative_path: str) -> Path:
+    """Resolve one bundled asset for both source runs and PyInstaller EXEs."""
+
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    return base_dir / relative_path
