@@ -41,11 +41,13 @@ class ContourPlotFrame(ttk.LabelFrame):
         self._unit_preset = unit_preset
         normalized_orientation = orientation.strip().lower()
         self._orientation = normalized_orientation if normalized_orientation in {"horizontal", "vertical_clockwise"} else "horizontal"
+        self._marker_legend_var = tk.StringVar(value="")
         self._contour: list[NozzlePoint] = []
         self._profile: list[ThermochemistryProfilePoint] = []
         self._markers: list[ContourMarker] = []
         self._wall_thickness_m: float | None = None
         self._selected_index: int | None = None
+        self._last_redraw_signature: tuple[object, ...] | None = None
 
         if Figure is None or FigureCanvasTkAgg is None:
             ttk.Label(
@@ -61,11 +63,18 @@ class ContourPlotFrame(ttk.LabelFrame):
             self._axis = None
             return
 
-        figure_size = (6, 4) if self._orientation == "horizontal" else (3.7, 6.5)
-        self._figure = Figure(figsize=figure_size, dpi=100)
+        figure_size = (6, 4) if self._orientation == "horizontal" else (2.2, 5.8)
+        self._figure = Figure(figsize=figure_size, dpi=100, constrained_layout=True)
         self._axis = self._figure.add_subplot(111)
         self._canvas = FigureCanvasTkAgg(self._figure, master=self)
         self._canvas.get_tk_widget().pack(fill="both", expand=True)
+        ttk.Label(
+            self,
+            textvariable=self._marker_legend_var,
+            wraplength=240 if self._orientation == "vertical_clockwise" else 420,
+            justify="left",
+            foreground="#4d5b68",
+        ).pack(fill="x", pady=(8, 0))
         self._canvas.mpl_connect("button_press_event", self._handle_click)
         self._configure_axis()
 
@@ -91,6 +100,28 @@ class ContourPlotFrame(ttk.LabelFrame):
         self._selected_index = None
         self._redraw()
 
+    def _build_redraw_signature(self) -> tuple[object, ...]:
+        if not self._contour:
+            return (self._unit_preset, self._orientation, None, self._selected_index)
+        first = self._contour[0]
+        last = self._contour[-1]
+        marker_signature = tuple(
+            (marker.label, round(marker.x_m, 6), round(marker.radius_m, 6))
+            for marker in self._markers
+        )
+        return (
+            self._unit_preset,
+            self._orientation,
+            len(self._contour),
+            round(first.x_m, 6),
+            round(first.radius_m, 6),
+            round(last.x_m, 6),
+            round(last.radius_m, 6),
+            round(self._wall_thickness_m or 0.0, 8),
+            self._selected_index,
+            marker_signature,
+        )
+
     def _configure_axis(self) -> None:
         if self._axis is None:
             return
@@ -115,8 +146,13 @@ class ContourPlotFrame(ttk.LabelFrame):
     def _redraw(self) -> None:
         if self._canvas is None or self._axis is None:
             return
+        signature = self._build_redraw_signature()
+        if signature == self._last_redraw_signature:
+            return
+        self._last_redraw_signature = signature
         self._axis.clear()
         self._configure_axis()
+        self._marker_legend_var.set(self._build_marker_legend_text())
 
         if self._contour:
             coordinates = [
@@ -179,17 +215,19 @@ class ContourPlotFrame(ttk.LabelFrame):
                     linewidths=0.7,
                     zorder=6,
                 )
-                self._axis.annotate(
-                    marker.label,
-                    (marker_primary, marker_secondary),
-                    textcoords="offset points",
-                    xytext=(6, 6),
-                    fontsize=8,
-                    color=marker.color,
-                )
-
-        self._figure.tight_layout()
         self._canvas.draw_idle()
+
+    def _build_marker_legend_text(self) -> str:
+        if not self._markers:
+            return ""
+        labels = []
+        seen: set[str] = set()
+        for marker in self._markers:
+            if marker.label in seen:
+                continue
+            seen.add(marker.label)
+            labels.append(marker.label)
+        return "Markers: " + " | ".join(labels)
 
     def _handle_click(self, event: object) -> None:
         if self._canvas is None or self._axis is None:

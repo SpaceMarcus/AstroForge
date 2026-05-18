@@ -529,6 +529,7 @@ class MainWindow(tk.Tk):
         self._current_design_page.bind_sync_from_initial(self.copy_initial_design_to_current_design)
         self._current_design_page.bind_export_all(self.export_results)
         self._current_design_page.bind_clear_errors(self.reset_error)
+        self._current_design_page.bind_preview_update(self.update_current_design_preview)
         self._current_design_page.bind_apply_selected_of(self.apply_selected_of_to_inputs)
         self._current_design_page.bind_of_selected(self._on_of_sweep_point_selected)
         self._current_design_page.bind_metric_changed(self._refresh_of_sweep_plot)
@@ -1267,12 +1268,18 @@ class MainWindow(tk.Tk):
 
     def _on_design_inputs_changed(self) -> None:
         self._current_design_linked_to_initial = False
-        self._schedule_geometry_preview_refresh(
-            status_message=(
-                "Current Design draft updated. Preview may differ from the committed model until "
-                "you Commit Draft & Recalculate Current Design."
+        mark_design_inputs_changed(self._project_state)
+        self._invalidate_geometry_preview_display()
+        self._refresh_current_design_status_card()
+        if self._current_bundle is not None:
+            self._status_var.set(
+                "Current Design draft updated. Press Update Geometry Preview to inspect the draft contour, "
+                "or Commit Draft & Recalculate Current Design to make it authoritative."
             )
-        )
+        else:
+            self._status_var.set(
+                "Current Design draft updated. Commit Draft & Recalculate Current Design to create the first authoritative contour."
+            )
 
     def store_working_material_geometry(self) -> None:
         """Store geometry/material sandbox edits without touching Current Design."""
@@ -1370,12 +1377,43 @@ class MainWindow(tk.Tk):
     def _on_geometry_sandbox_inputs_changed(self) -> None:
         """Refresh the live workspace preview without committing anything."""
 
-        self._schedule_geometry_preview_refresh(
-            status_message=(
-                "Current Design draft updated. Thermal Analysis still uses the last committed r(x) "
-                "until you Commit Draft & Recalculate Current Design."
+        mark_design_inputs_changed(self._project_state)
+        self._invalidate_geometry_preview_display()
+        self._refresh_current_design_status_card()
+        if self._current_bundle is not None:
+            self._status_var.set(
+                "Geometry/material draft updated. Press Update Geometry Preview to inspect the draft contour. "
+                "Thermal Analysis still uses the last committed r(x)."
             )
-        )
+        else:
+            self._status_var.set(
+                "Geometry/material draft updated. Commit Draft & Recalculate Current Design to create the first authoritative contour."
+            )
+
+    def update_current_design_preview(self) -> None:
+        """Explicitly rebuild the lightweight workspace preview from the current draft."""
+
+        self.reset_error()
+        current_inputs = self._try_collect_current_design_draft_inputs()
+        if current_inputs is None:
+            self._invalidate_geometry_preview_display()
+            self._refresh_current_design_status_card()
+            self._status_var.set("Current Design draft is invalid. Fix the inputs before updating the geometry preview.")
+            return
+        self._refresh_flow_case_assessment(current_inputs)
+        self._update_geometry_sandbox_runtime_context(current_inputs)
+        self._refresh_thermal_analysis_context()
+        self._refresh_dashboard_views()
+        if self._geometry_preview_bundle is not None:
+            self._status_var.set(
+                "Geometry preview updated from the current draft. Thermal Analysis still uses the last committed Current Design."
+            )
+        elif self._current_bundle is not None:
+            self._status_var.set("Draft matches the committed Current Design. No separate preview overlay is needed.")
+        else:
+            self._status_var.set(
+                "No committed Current Design exists yet. Commit Draft & Recalculate Current Design to create the first authoritative contour."
+            )
 
     def _cancel_pending_geometry_preview_refresh(self) -> None:
         if self._geometry_preview_refresh_after_id is None:
@@ -1794,6 +1832,10 @@ class MainWindow(tk.Tk):
                 preview_status = (
                     "Preview differs from committed model. Thermal Analysis still uses the last committed Current Design."
                 )
+            elif stale:
+                preview_status = (
+                    "Draft changed after the last preview update. The geometry viewer currently shows the committed model until you press Update Geometry Preview."
+                )
             else:
                 preview_status = "Preview matches the committed Current Design."
             if current_inputs is None:
@@ -1811,6 +1853,21 @@ class MainWindow(tk.Tk):
         self._current_design_thermal_status_var.set(thermal_text)
         self._current_design_contour_status_var.set(contour_status)
         self._current_design_preview_status_var.set(preview_status)
+
+    def _invalidate_geometry_preview_display(self) -> None:
+        """Drop any stale draft overlay so the viewer stays tied to a known contour."""
+
+        self._cancel_pending_geometry_preview_refresh()
+        had_preview = self._geometry_preview_bundle is not None
+        self._geometry_preview_bundle = None
+        self._geometry_contour_bundle = None
+        self._current_design_page.clear_preview_contour()
+        if had_preview and self._current_bundle is not None:
+            self._geometry_panel.update_results(self._current_bundle)
+            self._geometry_panel.set_estimated_liner_mass(self._current_bundle.geometry.estimated_liner_mass_kg)
+        elif had_preview:
+            self._geometry_panel.clear()
+            self._geometry_panel.set_estimated_liner_mass(None)
 
     def _preview_differs_from_committed(self) -> bool:
         """Return whether the live sandbox preview no longer matches the committed bundle."""
@@ -2061,36 +2118,41 @@ class MainWindow(tk.Tk):
         )
         self._geometry_preview_bundle = preview_bundle if preview_differs else None
         runtime_bundle = preview_bundle if preview_differs else self._current_bundle
-        self._current_design_page.set_runtime_context(
-            preview_inputs,
-            current_bundle=self._current_bundle,
-            preview_bundle=self._geometry_preview_bundle,
-        )
-        if self._current_bundle is not None:
-            self._update_current_design_contour_frame(
-                self._current_bundle,
-                separation_point=self._current_separation_point,
+        self._current_design_page.begin_geometry_update()
+        try:
+            self._current_design_page.set_runtime_context(
+                preview_inputs,
+                current_bundle=self._current_bundle,
+                preview_bundle=self._geometry_preview_bundle,
             )
-        else:
-            self._current_design_contour_bundle = None
-            self._current_design_page.update_committed_contour(None)
-        if runtime_bundle is not None:
-            preview_separation_point = predict_separation_point(runtime_bundle)
-            if self._geometry_preview_bundle is not None:
-                self._update_geometry_contour_frame(runtime_bundle, separation_point=preview_separation_point)
+            if self._current_bundle is not None:
+                self._update_current_design_contour_frame(
+                    self._current_bundle,
+                    separation_point=self._current_separation_point,
+                )
             else:
+                self._current_design_contour_bundle = None
+                self._current_design_page.update_committed_contour(None)
+            if runtime_bundle is not None:
+                preview_separation_point = predict_separation_point(runtime_bundle)
+                if self._geometry_preview_bundle is not None:
+                    self._update_geometry_contour_frame(runtime_bundle, separation_point=preview_separation_point)
+                else:
+                    self._geometry_contour_bundle = None
+                    self._current_design_page.clear_preview_contour()
+                self._geometry_panel.update_results(runtime_bundle)
+                liner_mass_kg = (
+                    runtime_bundle.geometry.estimated_liner_mass_kg
+                    if self._preview_liner_mass_kg is not None or runtime_bundle is self._current_bundle
+                    else None
+                )
+                self._geometry_panel.set_estimated_liner_mass(liner_mass_kg)
+            else:
+                self._geometry_contour_bundle = None
                 self._current_design_page.clear_preview_contour()
-            self._geometry_panel.update_results(runtime_bundle)
-            liner_mass_kg = (
-                runtime_bundle.geometry.estimated_liner_mass_kg
-                if self._preview_liner_mass_kg is not None or runtime_bundle is self._current_bundle
-                else None
-            )
-            self._geometry_panel.set_estimated_liner_mass(liner_mass_kg)
-        else:
-            self._geometry_contour_bundle = None
-            self._current_design_page.clear_preview_contour()
-            self._geometry_panel.set_estimated_liner_mass(None)
+                self._geometry_panel.set_estimated_liner_mass(None)
+        finally:
+            self._current_design_page.end_geometry_update()
 
     def _build_geometry_preview_bundle(self, preview_inputs: InputParameters | None) -> ExportBundle | None:
         """Build a geometry-only preview bundle from sandbox edits and last thermochemistry."""

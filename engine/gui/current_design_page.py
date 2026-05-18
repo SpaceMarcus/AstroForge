@@ -19,7 +19,7 @@ from engine.gui.project_panels import FlowCasePanel, ScrollableContentFrame
 from engine.gui.result_panel import GeometryDetailsPanel, GeometryMaterialEditorPanel, MaterialOptionsPanel, SummaryPanel
 from engine.models import ExportBundle, InputParameters, OFSweepMetric, OFSweepPoint, PredictedSeparationPoint, ThermochemistryProfilePoint
 from engine.performance_preview import PerformancePreviewResult
-from engine.unit_system import UnitPreset
+from engine.unit_system import UnitPreset, format_quantity
 from engine.utils.validation import InputValidationError
 
 
@@ -42,10 +42,8 @@ class CurrentDesignPage(ttk.Frame):
         of_summary_var: tk.StringVar,
     ) -> None:
         super().__init__(master)
-        # Give the editable workspace more width than the geometry viewer so
-        # chamber/nozzle input tiles remain accessible on smaller desktop widths.
-        self.columnconfigure(0, weight=5)
-        self.columnconfigure(1, weight=3)
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=0, minsize=300)
         self.rowconfigure(0, weight=1)
 
         self._unit_preset = unit_preset
@@ -70,6 +68,7 @@ class CurrentDesignPage(ttk.Frame):
         self._apply_selected_of_callback: Callable[[], None] | None = None
         self._metric_changed_callback: Callable[[], None] | None = None
         self._of_point_selected_callback: Callable[[OFSweepPoint], None] | None = None
+        self._preview_update_callback: Callable[[], None] | None = None
 
         self._committed_bundle: ExportBundle | None = None
         self._preview_bundle: ExportBundle | None = None
@@ -78,6 +77,15 @@ class CurrentDesignPage(ttk.Frame):
         self._visible_bundle: ExportBundle | None = None
         self._committed_wall_thickness_m: float | None = None
         self._preview_wall_thickness_m: float | None = None
+        self._selected_profile_point: ThermochemistryProfilePoint | None = None
+        self._selected_station_var = tk.StringVar(value="Selected station: none")
+        self._suspend_geometry_redraw = False
+        self._pending_geometry_redraw = False
+        self._species_popup: tk.Toplevel | None = None
+        self._species_summary_panel: SummaryPanel | None = None
+        self._of_sweep_popup: tk.Toplevel | None = None
+        self._popup_of_sweep_plot: OFSweepPlotFrame | None = None
+        self._open_species_button: ttk.Button | None = None
 
         self._build_layout()
 
@@ -103,7 +111,7 @@ class CurrentDesignPage(ttk.Frame):
 
     @property
     def summary_panel(self) -> SummaryPanel:
-        return self._summary_panel
+        return self._ensure_species_popup_panel()
 
     @property
     def geometry_details_panel(self) -> GeometryDetailsPanel:
@@ -115,7 +123,7 @@ class CurrentDesignPage(ttk.Frame):
 
     @property
     def of_sweep_plot(self) -> OFSweepPlotFrame:
-        return self._of_sweep_plot
+        return self._ensure_of_sweep_popup_plot()
 
     def _build_layout(self) -> None:
         left_scroll = ScrollableContentFrame(self)
@@ -124,9 +132,11 @@ class CurrentDesignPage(ttk.Frame):
         left_content.columnconfigure(0, weight=1)
 
         right_frame = ttk.Frame(self)
-        right_frame.grid(row=0, column=1, sticky="nsew")
+        right_frame.grid(row=0, column=1, sticky="ns")
+        right_frame.configure(width=300)
+        right_frame.grid_propagate(False)
         right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(0, weight=1)
+        right_frame.rowconfigure(1, weight=1)
 
         status_frame = ttk.LabelFrame(left_content, text="Current Design Status", padding=12)
         status_frame.grid(row=0, column=0, sticky="ew")
@@ -159,8 +169,9 @@ class CurrentDesignPage(ttk.Frame):
             workflow_frame,
             text=(
                 "Edit chamber, throat, nozzle and material values directly here. "
-                "The geometry viewer updates immediately, but Thermal Analysis, Report and Export "
-                "keep using the last committed contour until you commit and recalculate."
+                "Use Update Geometry Preview when you want to inspect the draft contour. "
+                "Thermal Analysis, Report and Export keep using the last committed contour until "
+                "you commit and recalculate."
             ),
             wraplength=620,
             justify="left",
@@ -194,8 +205,27 @@ class CurrentDesignPage(ttk.Frame):
         self._geometry_panel = GeometryDetailsPanel(left_content, unit_preset=self._unit_preset)
         self._geometry_panel.grid(row=8, column=0, sticky="ew", pady=(10, 0))
 
+        station_frame = ttk.LabelFrame(right_frame, text="Selected Station", padding=10)
+        station_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        station_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            station_frame,
+            textvariable=self._selected_station_var,
+            wraplength=240,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew")
+        self._open_species_button = ttk.Button(
+            station_frame,
+            text="Open Species & Notes",
+            command=self._open_species_notes_popup,
+            state="disabled",
+        )
+        self._open_species_button.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+
         geometry_view_frame = ttk.LabelFrame(right_frame, text="Geometry Viewer", padding=12)
-        geometry_view_frame.grid(row=0, column=0, sticky="nsew")
+        geometry_view_frame.grid(row=1, column=0, sticky="nsew")
+        geometry_view_frame.configure(width=280, height=620)
+        geometry_view_frame.grid_propagate(False)
         geometry_view_frame.columnconfigure(0, weight=1)
         geometry_view_frame.rowconfigure(0, weight=1)
 
@@ -215,12 +245,9 @@ class CurrentDesignPage(ttk.Frame):
             justify="left",
         ).grid(row=1, column=0, sticky="ew", pady=(10, 0))
 
-        self._summary_panel = SummaryPanel(right_frame, unit_preset=self._unit_preset)
-        self._summary_panel.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
-
         action_bar = ttk.Frame(self, padding=(0, 10, 0, 0))
         action_bar.grid(row=1, column=0, columnspan=2, sticky="ew")
-        for column in range(4):
+        for column in range(5):
             action_bar.columnconfigure(column, weight=1)
         self._commit_button = ttk.Button(
             action_bar,
@@ -228,30 +255,35 @@ class CurrentDesignPage(ttk.Frame):
             command=self._handle_commit_recalculate,
         )
         self._commit_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._preview_button = ttk.Button(
+            action_bar,
+            text="Update Geometry Preview",
+            command=self._handle_preview_update,
+        )
+        self._preview_button.grid(row=0, column=1, sticky="ew", padx=6)
         self._sync_button = ttk.Button(
             action_bar,
             text="Sync From Initial",
             command=self._handle_sync_from_initial,
         )
-        self._sync_button.grid(row=0, column=1, sticky="ew", padx=6)
+        self._sync_button.grid(row=0, column=2, sticky="ew", padx=6)
         self._export_button = ttk.Button(
             action_bar,
             text="Export All",
             command=self._handle_export,
         )
-        self._export_button.grid(row=0, column=2, sticky="ew", padx=6)
+        self._export_button.grid(row=0, column=3, sticky="ew", padx=6)
         self._clear_errors_button = ttk.Button(
             action_bar,
             text="Clear Errors",
             command=self._handle_clear_errors,
         )
-        self._clear_errors_button.grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        self._clear_errors_button.grid(row=0, column=4, sticky="ew", padx=(6, 0))
 
     def _build_sweep_section(self, master: ttk.Frame, *, row_index: int) -> None:
         sweep_frame = ttk.LabelFrame(master, text="Mixture Ratio", padding=12)
-        sweep_frame.grid(row=row_index, column=0, sticky="nsew", pady=(10, 0))
+        sweep_frame.grid(row=row_index, column=0, sticky="ew", pady=(10, 0))
         sweep_frame.columnconfigure(0, weight=1)
-        sweep_frame.rowconfigure(2, weight=1)
 
         controls_frame = ttk.Frame(sweep_frame)
         controls_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
@@ -293,13 +325,11 @@ class CurrentDesignPage(ttk.Frame):
             wraplength=620,
             justify="left",
         ).grid(row=1, column=0, sticky="ew", pady=(0, 6))
-
-        self._of_sweep_plot = OFSweepPlotFrame(
+        ttk.Button(
             sweep_frame,
-            on_point_selected=self._handle_of_point_selected,
-            unit_preset=self._unit_preset,
-        )
-        self._of_sweep_plot.grid(row=2, column=0, sticky="nsew")
+            text="Open O/F Sweep",
+            command=self._open_of_sweep_popup,
+        ).grid(row=2, column=0, sticky="w")
 
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         self._unit_preset = unit_preset
@@ -308,10 +338,18 @@ class CurrentDesignPage(ttk.Frame):
         self._geometry_editor_panel.set_unit_preset(unit_preset)
         self._material_panel.set_unit_preset(unit_preset)
         self._geometry_panel.set_unit_preset(unit_preset)
-        self._summary_panel.set_unit_preset(unit_preset)
+        if self._species_summary_panel is not None:
+            self._species_summary_panel.set_unit_preset(unit_preset)
         self._contour_plot_frame.set_unit_preset(unit_preset)
-        self._of_sweep_plot.set_unit_preset(unit_preset)
-        self._refresh_geometry_view()
+        if self._popup_of_sweep_plot is not None:
+            self._popup_of_sweep_plot.set_unit_preset(unit_preset)
+        if self._selected_profile_point is not None:
+            self._selected_station_var.set(
+                "Selected station: "
+                f"x = {format_quantity(self._selected_profile_point.x_m, 'length', self._unit_preset, include_unit=True)}, "
+                f"r = {format_quantity(self._selected_profile_point.radius_m, 'length', self._unit_preset, include_unit=True)}"
+            )
+        self._request_geometry_redraw()
 
     def set_inputs(self, inputs: InputParameters, current_bundle: ExportBundle | None = None) -> None:
         self._input_panel.set_inputs(inputs)
@@ -329,7 +367,7 @@ class CurrentDesignPage(ttk.Frame):
         self._chamber_geometry_panel.set_runtime_context(inputs, current_bundle=preview_bundle or current_bundle)
         self._geometry_editor_panel.set_runtime_context(inputs, current_bundle=preview_bundle or current_bundle)
         self._preview_bundle = preview_bundle
-        self._refresh_geometry_view()
+        self._request_geometry_redraw()
 
     def set_flow_case_assessment(self, assessment) -> None:
         self._input_panel.set_flow_case_assessment(assessment)
@@ -386,7 +424,11 @@ class CurrentDesignPage(ttk.Frame):
         self._committed_bundle = bundle
         self._committed_separation_point = separation_point
         self._committed_wall_thickness_m = wall_thickness_m
-        self._refresh_geometry_view()
+        self._selected_profile_point = None
+        self._selected_station_var.set("Selected station: none")
+        if self._open_species_button is not None:
+            self._open_species_button.configure(state="normal" if bundle is not None else "disabled")
+        self._request_geometry_redraw()
 
     def update_preview_contour(
         self,
@@ -398,13 +440,19 @@ class CurrentDesignPage(ttk.Frame):
         self._preview_bundle = bundle
         self._preview_separation_point = separation_point
         self._preview_wall_thickness_m = wall_thickness_m
-        self._refresh_geometry_view()
+        self._selected_profile_point = None
+        self._selected_station_var.set("Selected station: none")
+        if self._open_species_button is not None:
+            self._open_species_button.configure(state="normal" if bundle is not None or self._committed_bundle is not None else "disabled")
+        self._request_geometry_redraw()
 
     def clear_preview_contour(self) -> None:
         self._preview_bundle = None
         self._preview_separation_point = None
         self._preview_wall_thickness_m = None
-        self._refresh_geometry_view()
+        self._selected_profile_point = None
+        self._selected_station_var.set("Selected station: none")
+        self._request_geometry_redraw()
 
     def update_geometry_summary(self, bundle: ExportBundle) -> None:
         self._geometry_panel.update_results(bundle)
@@ -417,10 +465,15 @@ class CurrentDesignPage(ttk.Frame):
         self._visible_bundle = None
         self._committed_wall_thickness_m = None
         self._preview_wall_thickness_m = None
+        self._selected_profile_point = None
+        self._selected_station_var.set("Selected station: none")
         self._geometry_view_note_var.set("Committed Current Design will appear here after the first full recalculation.")
-        self._summary_panel.clear()
+        if self._species_summary_panel is not None:
+            self._species_summary_panel.clear()
         self._geometry_panel.clear()
         self._contour_plot_frame.update_contour([], [], [])
+        if self._open_species_button is not None:
+            self._open_species_button.configure(state="disabled")
 
     def get_base_inputs(self) -> InputParameters:
         return self._input_panel.get_input_parameters()
@@ -502,6 +555,25 @@ class CurrentDesignPage(ttk.Frame):
     def bind_metric_changed(self, callback: Callable[[], None]) -> None:
         self._metric_changed_callback = callback
 
+    def bind_preview_update(self, callback: Callable[[], None]) -> None:
+        self._preview_update_callback = callback
+
+    def begin_geometry_update(self) -> None:
+        self._suspend_geometry_redraw = True
+        self._pending_geometry_redraw = False
+
+    def end_geometry_update(self) -> None:
+        self._suspend_geometry_redraw = False
+        if self._pending_geometry_redraw:
+            self._pending_geometry_redraw = False
+            self._refresh_geometry_view()
+
+    def _request_geometry_redraw(self) -> None:
+        if self._suspend_geometry_redraw:
+            self._pending_geometry_redraw = True
+            return
+        self._refresh_geometry_view()
+
     def _refresh_geometry_view(self) -> None:
         active_bundle = self._preview_bundle or self._committed_bundle
         active_separation = self._preview_separation_point if self._preview_bundle is not None else self._committed_separation_point
@@ -510,6 +582,8 @@ class CurrentDesignPage(ttk.Frame):
         if active_bundle is None:
             self._geometry_view_note_var.set("Committed Current Design will appear here after the first full recalculation.")
             self._contour_plot_frame.update_contour([], [], [])
+            if self._species_summary_panel is not None and self._species_popup is not None and self._species_popup.winfo_exists() and self._species_popup.state() != "withdrawn":
+                self._species_summary_panel.clear()
             return
         if self._preview_bundle is not None and self._committed_bundle is not None:
             self._geometry_view_note_var.set(
@@ -527,10 +601,16 @@ class CurrentDesignPage(ttk.Frame):
             build_contour_markers(active_bundle, active_separation),
             wall_thickness_m=active_wall_thickness,
         )
+        if self._species_summary_panel is not None and self._species_popup is not None and self._species_popup.winfo_exists() and self._species_popup.state() != "withdrawn":
+            self._refresh_species_popup_content()
 
     def _handle_commit_recalculate(self) -> None:
         if self._commit_callback is not None:
             self._commit_callback()
+
+    def _handle_preview_update(self) -> None:
+        if self._preview_update_callback is not None:
+            self._preview_update_callback()
 
     def _handle_sync_from_initial(self) -> None:
         if self._sync_callback is not None:
@@ -545,6 +625,16 @@ class CurrentDesignPage(ttk.Frame):
             self._clear_errors_callback()
 
     def _handle_point_selected(self, profile_point: ThermochemistryProfilePoint) -> None:
+        self._selected_profile_point = profile_point
+        self._selected_station_var.set(
+            "Selected station: "
+            f"x = {format_quantity(profile_point.x_m, 'length', self._unit_preset, include_unit=True)}, "
+            f"r = {format_quantity(profile_point.radius_m, 'length', self._unit_preset, include_unit=True)}"
+        )
+        if self._open_species_button is not None:
+            self._open_species_button.configure(state="normal")
+        if self._species_popup is not None and self._species_popup.winfo_exists() and self._species_popup.state() != "withdrawn":
+            self._open_species_notes_popup()
         if self._point_selected_callback is not None:
             self._point_selected_callback(profile_point)
 
@@ -559,3 +649,57 @@ class CurrentDesignPage(ttk.Frame):
     def _handle_metric_changed(self, _event: object) -> None:
         if self._metric_changed_callback is not None:
             self._metric_changed_callback()
+
+    def _ensure_species_popup_panel(self) -> SummaryPanel:
+        if self._species_summary_panel is not None and self._species_popup is not None and self._species_popup.winfo_exists():
+            return self._species_summary_panel
+        popup = tk.Toplevel(self)
+        popup.title("Species and Notes")
+        popup.geometry("720x760")
+        popup.withdraw()
+        popup.protocol("WM_DELETE_WINDOW", popup.withdraw)
+        panel = SummaryPanel(popup, unit_preset=self._unit_preset)
+        panel.pack(fill="both", expand=True)
+        self._species_popup = popup
+        self._species_summary_panel = panel
+        return panel
+
+    def _ensure_of_sweep_popup_plot(self) -> OFSweepPlotFrame:
+        if self._popup_of_sweep_plot is not None and self._of_sweep_popup is not None and self._of_sweep_popup.winfo_exists():
+            return self._popup_of_sweep_plot
+        popup = tk.Toplevel(self)
+        popup.title("O/F Sweep")
+        popup.geometry("860x620")
+        popup.withdraw()
+        popup.protocol("WM_DELETE_WINDOW", popup.withdraw)
+        plot = OFSweepPlotFrame(
+            popup,
+            on_point_selected=self._handle_of_point_selected,
+            unit_preset=self._unit_preset,
+        )
+        plot.pack(fill="both", expand=True)
+        self._of_sweep_popup = popup
+        self._popup_of_sweep_plot = plot
+        return plot
+
+    def _refresh_species_popup_content(self) -> None:
+        panel = self._ensure_species_popup_panel()
+        if self._selected_profile_point is not None and self._visible_bundle is not None:
+            panel.show_profile_point(self._selected_profile_point, self._visible_bundle)
+        elif self._visible_bundle is not None:
+            panel.show_default_summary(self._visible_bundle)
+        else:
+            panel.clear()
+
+    def _open_species_notes_popup(self) -> None:
+        popup = self._ensure_species_popup_panel().master
+        self._refresh_species_popup_content()
+        popup.deiconify()
+        popup.lift()
+        popup.focus_force()
+
+    def _open_of_sweep_popup(self) -> None:
+        popup = self._ensure_of_sweep_popup_plot().master
+        popup.deiconify()
+        popup.lift()
+        popup.focus_force()
