@@ -89,6 +89,9 @@ class InputParameters:
     liner_material: str = "CuCrZr"
     liner_coating_enabled: bool = False
     liner_coating: str | None = None
+    closeout_enabled: bool = False
+    closeout_thickness_m: float | None = None
+    closeout_material: str | None = None
     wall_thickness_mode: WallThicknessMode = WallThicknessMode.CONSTANT
     wall_thickness_m: float | None = 0.0015
 

@@ -11,8 +11,15 @@ from typing import Callable
 from engine.gui.project_panels import ScrollableContentFrame
 from engine.models import ExportBundle, InputParameters
 from engine.thermal_analysis import (
+    BartzThroatCurvatureMode,
     CoolingFlowDirection,
+    OpticalPathLengthMode,
+    ParticipatingMediaModelType,
+    ParticipatingSpeciesMode,
     PressureCalculationMode,
+    RadiationModelType,
+    RadiationSettings,
+    RadiationTemperatureSource,
     SolverSettings,
     StationDistributionMode,
     ThermalAnalysisInputs,
@@ -65,6 +72,56 @@ _PRESSURE_MODE_LABELS = {
 }
 _PRESSURE_MODE_VALUES = {label: value for value, label in _PRESSURE_MODE_LABELS.items()}
 
+_BARTZ_CURVATURE_MODE_LABELS = {
+    BartzThroatCurvatureMode.UPSTREAM: "Upstream Rc,t",
+    BartzThroatCurvatureMode.MEAN: "Mean Rc,t",
+    BartzThroatCurvatureMode.DOWNSTREAM: "Downstream Rc,t",
+}
+_BARTZ_CURVATURE_MODE_VALUES = {
+    label: value for value, label in _BARTZ_CURVATURE_MODE_LABELS.items()
+}
+
+_RADIATION_MODEL_LABELS = {
+    RadiationModelType.GREY_GAS: "Grey gas",
+    RadiationModelType.USER_FIXED_HEAT_FLUX: "User fixed heat flux",
+    RadiationModelType.PARTICIPATING_MEDIA_EFFECTIVE_EMISSIVITY: "Participating-media effective emissivity",
+}
+_RADIATION_MODEL_VALUES = {label: value for value, label in _RADIATION_MODEL_LABELS.items()}
+
+_RADIATION_TEMPERATURE_SOURCE_LABELS = {
+    RadiationTemperatureSource.LOCAL_GAS_TEMPERATURE: "Local gas temperature",
+    RadiationTemperatureSource.ADIABATIC_WALL_TEMPERATURE: "Adiabatic wall temperature",
+    RadiationTemperatureSource.CHAMBER_TEMPERATURE: "Chamber temperature",
+}
+_RADIATION_TEMPERATURE_SOURCE_VALUES = {
+    label: value for value, label in _RADIATION_TEMPERATURE_SOURCE_LABELS.items()
+}
+
+_PARTICIPATING_MEDIA_MODEL_LABELS = {
+    ParticipatingMediaModelType.EFFECTIVE_EMISSIVITY: "Effective emissivity",
+    ParticipatingMediaModelType.SIMPLE_CO2_H2O_PLACEHOLDER: "Simple CO2/H2O placeholder",
+}
+_PARTICIPATING_MEDIA_MODEL_VALUES = {
+    label: value for value, label in _PARTICIPATING_MEDIA_MODEL_LABELS.items()
+}
+
+_PARTICIPATING_SPECIES_MODE_LABELS = {
+    ParticipatingSpeciesMode.CO2_H2O_ONLY: "CO2 + H2O only",
+    ParticipatingSpeciesMode.ALL_RADIATING_POLYATOMIC: "All radiating polyatomic species",
+}
+_PARTICIPATING_SPECIES_MODE_VALUES = {
+    label: value for value, label in _PARTICIPATING_SPECIES_MODE_LABELS.items()
+}
+
+_OPTICAL_PATH_LENGTH_MODE_LABELS = {
+    OpticalPathLengthMode.LOCAL_DIAMETER: "Local diameter",
+    OpticalPathLengthMode.USER_FIXED: "User fixed",
+    OpticalPathLengthMode.MEAN_BEAM_LENGTH_PLACEHOLDER: "Mean beam length (placeholder)",
+}
+_OPTICAL_PATH_LENGTH_MODE_VALUES = {
+    label: value for value, label in _OPTICAL_PATH_LENGTH_MODE_LABELS.items()
+}
+
 
 @dataclass(frozen=True, slots=True)
 class _ThermalPlotField:
@@ -113,19 +170,82 @@ _THERMAL_PLOT_FIELDS: dict[str, _ThermalPlotField] = {
     "h_c": _ThermalPlotField("h_c", "heat_transfer_coefficient", lambda station: station.h_c_w_per_m2_k),
     "q_station": _ThermalPlotField("Q_station", None, lambda station: station.q_station_w),
     "q_hot": _ThermalPlotField("Heat flux q''", "heat_flux", lambda station: station.q_hot_w_per_m2),
+    "q_conv": _ThermalPlotField("Convective heat flux q''_conv", "heat_flux", lambda station: station.q_conv_w_per_m2),
+    "q_rad": _ThermalPlotField("Radiative heat flux q''_rad", "heat_flux", lambda station: station.q_rad_w_per_m2),
+    "q_total": _ThermalPlotField("Total heat flux q''_total", "heat_flux", lambda station: station.q_total_w_per_m2),
     "t_c_in": _ThermalPlotField("T_c_in", "temperature", lambda station: station.coolant_temperature_in_k),
     "t_c_bulk": _ThermalPlotField("T_c_bulk", "temperature", lambda station: station.coolant_temperature_bulk_k),
     "t_c_out": _ThermalPlotField("T_c_out", "temperature", lambda station: station.coolant_temperature_out_k),
     "t_wg": _ThermalPlotField("T_wg", "temperature", lambda station: station.wall_temperature_hot_gas_side_k),
     "t_wc": _ThermalPlotField("T_wc", "temperature", lambda station: station.wall_temperature_coolant_side_k),
     "delta_t_wall": _ThermalPlotField("Delta_T_wall", "temperature", lambda station: station.wall_delta_t_k),
+    "t_rad": _ThermalPlotField("T_rad", "temperature", lambda station: station.radiation_temperature_k),
     "p_required_in": _ThermalPlotField("p_required_in", "pressure", lambda station: station.required_pressure_in_pa),
     "p_required_out": _ThermalPlotField("p_required_out", "pressure", lambda station: station.required_pressure_out_pa),
     "delta_p_station": _ThermalPlotField("Delta_p_station", "pressure", lambda station: station.pressure_drop_station_pa),
     "re_coolant": _ThermalPlotField("Re_coolant", None, lambda station: station.reynolds_coolant),
+    "coolant_cp": _ThermalPlotField("Coolant cp", "specific_heat", lambda station: station.coolant_cp_j_per_kg_k),
+    "coolant_viscosity": _ThermalPlotField("Coolant viscosity µ", "viscosity", lambda station: station.coolant_viscosity_pa_s),
     "nu_coolant": _ThermalPlotField("Nu_coolant", None, lambda station: station.nusselt_coolant),
     "friction_factor": _ThermalPlotField("friction_factor", None, lambda station: station.friction_factor),
+    "gas_emissivity": _ThermalPlotField("Gas effective emissivity", None, lambda station: station.gas_effective_emissivity),
+    "radiation_fraction": _ThermalPlotField(
+        "Radiation fraction",
+        None,
+        lambda station: (
+            None
+            if station.q_total_w_per_m2 in {None, 0.0} or station.q_rad_w_per_m2 is None
+            else station.q_rad_w_per_m2 / station.q_total_w_per_m2
+        ),
+    ),
     "thermal_margin": _ThermalPlotField("thermal_margin", "temperature", lambda station: station.thermal_margin_k),
+    "wall_mean_temperature": _ThermalPlotField(
+        "Wall mean temperature",
+        "temperature",
+        lambda station: station.wall_mean_temperature_k,
+    ),
+    "pressure_delta": _ThermalPlotField(
+        "Pressure delta",
+        "pressure",
+        lambda station: station.pressure_delta_pa,
+    ),
+    "hoop_stress": _ThermalPlotField("Hoop stress", "stress", lambda station: station.hoop_stress_pa),
+    "longitudinal_stress": _ThermalPlotField(
+        "Longitudinal stress",
+        "stress",
+        lambda station: station.longitudinal_stress_pa,
+    ),
+    "thermal_strain": _ThermalPlotField("Thermal strain", None, lambda station: station.thermal_strain),
+    "thermal_stress": _ThermalPlotField(
+        "Elastic thermal-stress indicator",
+        "stress",
+        lambda station: station.thermal_stress_pa,
+    ),
+    "von_mises_stress": _ThermalPlotField(
+        "Von Mises stress",
+        "stress",
+        lambda station: station.equivalent_von_mises_stress_pa,
+    ),
+    "material_strength_margin": _ThermalPlotField(
+        "Material screening margin (Rp0.2(T))",
+        None,
+        lambda station: station.material_strength_margin,
+    ),
+    "total_screening_strain": _ThermalPlotField(
+        "Total screening strain",
+        None,
+        lambda station: station.total_screening_strain,
+    ),
+    "closeout_hoop_stress": _ThermalPlotField(
+        "Closeout hoop stress",
+        "stress",
+        lambda station: station.closeout_hoop_stress_pa,
+    ),
+    "closeout_material_strength_margin": _ThermalPlotField(
+        "Closeout material strength margin",
+        None,
+        lambda station: station.closeout_material_strength_margin,
+    ),
 }
 
 _THERMAL_PLOT_X_KEYS = (
@@ -150,6 +270,7 @@ class ExistingDesignContextCard(ttk.LabelFrame):
         self.columnconfigure(3, weight=1)
         self._unit_preset = unit_preset
         self._value_vars = {
+            "design_status": tk.StringVar(value="not yet committed"),
             "pc": tk.StringVar(value="not yet computed"),
             "of": tk.StringVar(value="not yet set"),
             "mdot_total": tk.StringVar(value="not yet computed"),
@@ -158,8 +279,11 @@ class ExistingDesignContextCard(ttk.LabelFrame):
             "wall_material": tk.StringVar(value="not yet set"),
             "wall_thickness": tk.StringVar(value="not yet set"),
             "geometry_source": tk.StringVar(value="Committed Current Design"),
+            "contour_status": tk.StringVar(value="No committed contour available."),
         }
         fields = [
+            ("design_status", "design status"),
+            ("geometry_source", "geometry source"),
             ("pc", "pc"),
             ("of", "O/F"),
             ("mdot_total", "mdot_total"),
@@ -167,7 +291,6 @@ class ExistingDesignContextCard(ttk.LabelFrame):
             ("coolant_type", "coolant type"),
             ("wall_material", "wall material"),
             ("wall_thickness", "wall thickness"),
-            ("geometry_source", "geometry source"),
         ]
         for index, (key, label) in enumerate(fields):
             row = index // 2
@@ -177,13 +300,20 @@ class ExistingDesignContextCard(ttk.LabelFrame):
 
         ttk.Label(
             self,
+            textvariable=self._value_vars["contour_status"],
+            wraplength=980,
+            justify="left",
+        ).grid(row=5, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+
+        ttk.Label(
+            self,
             text=(
                 "This card shows the committed design data currently consumed by the annulus reference model. "
                 "Coolant type follows the current reference setup, while coolant mass flow comes from the Thermal Analysis inputs."
             ),
             wraplength=980,
             justify="left",
-        ).grid(row=4, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        ).grid(row=6, column=0, columnspan=4, sticky="ew", pady=(10, 0))
 
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         self._unit_preset = unit_preset
@@ -194,8 +324,11 @@ class ExistingDesignContextCard(ttk.LabelFrame):
         current_inputs: InputParameters | None,
         current_bundle: ExportBundle | None,
         thermal_inputs: ThermalAnalysisInputs,
+        design_status_label: str,
         geometry_source_label: str,
+        contour_status_label: str,
     ) -> None:
+        self._value_vars["design_status"].set(design_status_label)
         self._value_vars["pc"].set(
             format_quantity(
                 current_inputs.chamber_pressure_pa if current_inputs is not None else None,
@@ -234,6 +367,7 @@ class ExistingDesignContextCard(ttk.LabelFrame):
             )
         )
         self._value_vars["geometry_source"].set(geometry_source_label)
+        self._value_vars["contour_status"].set(contour_status_label)
 
 
 class AnnulusCoolingCard(ttk.LabelFrame):
@@ -251,6 +385,9 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             "coolant_inlet_temperature": tk.StringVar(value=""),
             "annulus_gap": tk.StringVar(value=""),
             "roughness": tk.StringVar(value=""),
+            "bartz_curvature_mode": tk.StringVar(
+                value=_BARTZ_CURVATURE_MODE_LABELS[BartzThroatCurvatureMode.UPSTREAM]
+            ),
             "pressure_mode": tk.StringVar(value=_PRESSURE_MODE_LABELS[PressureCalculationMode.BACKWARD_REQUIRED_PUMP]),
             "injector_pressure_drop": tk.StringVar(value=""),
             "pressure_margin": tk.StringVar(value=""),
@@ -288,41 +425,49 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         self._field_labels["roughness"].grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(self, textvariable=self._variables["roughness"]).grid(row=4, column=1, sticky="ew", pady=4)
 
-        ttk.Label(self, text="Cooling flow direction").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(self, text="Bartz throat curvature Rc,t").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Combobox(
+            self,
+            state="readonly",
+            textvariable=self._variables["bartz_curvature_mode"],
+            values=list(_BARTZ_CURVATURE_MODE_VALUES),
+        ).grid(row=5, column=1, sticky="ew", pady=4)
+
+        ttk.Label(self, text="Cooling flow direction").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Combobox(
             self,
             state="readonly",
             textvariable=self._variables["flow_direction"],
             values=list(_FLOW_DIRECTION_VALUES),
-        ).grid(row=5, column=1, sticky="ew", pady=4)
+        ).grid(row=6, column=1, sticky="ew", pady=4)
 
-        ttk.Label(self, text="Pressure mode").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(self, text="Pressure mode").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Combobox(
             self,
             state="readonly",
             textvariable=self._variables["pressure_mode"],
             values=list(_PRESSURE_MODE_VALUES),
-        ).grid(row=6, column=1, sticky="ew", pady=4)
+        ).grid(row=7, column=1, sticky="ew", pady=4)
 
         self._field_labels["injector_pressure_drop"] = ttk.Label(self)
-        self._field_labels["injector_pressure_drop"].grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["injector_pressure_drop"]).grid(row=7, column=1, sticky="ew", pady=4)
+        self._field_labels["injector_pressure_drop"].grid(row=8, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(self, textvariable=self._variables["injector_pressure_drop"]).grid(row=8, column=1, sticky="ew", pady=4)
 
         self._field_labels["pressure_margin"] = ttk.Label(self)
-        self._field_labels["pressure_margin"].grid(row=8, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["pressure_margin"]).grid(row=8, column=1, sticky="ew", pady=4)
+        self._field_labels["pressure_margin"].grid(row=9, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(self, textvariable=self._variables["pressure_margin"]).grid(row=9, column=1, sticky="ew", pady=4)
 
         self._field_labels["external_feed_pressure_drop"] = ttk.Label(self)
-        self._field_labels["external_feed_pressure_drop"].grid(row=9, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["external_feed_pressure_drop"]).grid(row=9, column=1, sticky="ew", pady=4)
+        self._field_labels["external_feed_pressure_drop"].grid(row=10, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(self, textvariable=self._variables["external_feed_pressure_drop"]).grid(row=10, column=1, sticky="ew", pady=4)
 
         self._field_labels["pump_discharge_pressure"] = ttk.Label(self)
-        self._field_labels["pump_discharge_pressure"].grid(row=10, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._field_labels["pump_discharge_pressure"].grid(row=11, column=0, sticky="w", padx=(0, 10), pady=4)
         self._pump_pressure_entry = ttk.Entry(self, textvariable=self._variables["pump_discharge_pressure"])
-        self._pump_pressure_entry.grid(row=10, column=1, sticky="ew", pady=4)
+        self._pump_pressure_entry.grid(row=11, column=1, sticky="ew", pady=4)
 
-        ttk.Label(self, text="Fixed mechanical assumption").grid(row=11, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Label(self, text="3 spacer ribs").grid(row=11, column=1, sticky="w", pady=4)
+        ttk.Label(self, text="Fixed mechanical assumption").grid(row=12, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(self, text="3 spacer ribs").grid(row=12, column=1, sticky="w", pady=4)
 
         ttk.Label(
             self,
@@ -330,7 +475,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             wraplength=460,
             justify="left",
             foreground="#667381",
-        ).grid(row=12, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         ttk.Label(
             self,
@@ -341,7 +486,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             wraplength=460,
             justify="left",
             foreground="#7d4d1b",
-        ).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         self._apply_unit_labels()
         self._refresh_model_note()
@@ -387,6 +532,9 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         )
         self._variables["annulus_gap"].set(format_quantity(inputs.annulus_gap_m, "length", self._unit_preset))
         self._variables["roughness"].set(format_quantity(inputs.coolant_roughness_m, "length", self._unit_preset))
+        self._variables["bartz_curvature_mode"].set(
+            _BARTZ_CURVATURE_MODE_LABELS[inputs.bartz_throat_curvature_mode]
+        )
         self._variables["pressure_mode"].set(_PRESSURE_MODE_LABELS[inputs.solver_settings.pressure_mode])
         self._variables["injector_pressure_drop"].set(
             format_quantity(inputs.injector_pressure_drop_pa, "pressure", self._unit_preset)
@@ -415,6 +563,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         )
         annulus_gap = _parse_required_float(self._variables["annulus_gap"].get(), "Annulus gap height", errors)
         roughness = _parse_required_float(self._variables["roughness"].get(), "Coolant roughness", errors)
+        bartz_curvature_mode = _BARTZ_CURVATURE_MODE_VALUES.get(self._variables["bartz_curvature_mode"].get())
         pressure_mode = _PRESSURE_MODE_VALUES.get(self._variables["pressure_mode"].get())
         injector_pressure_drop = _parse_required_float(
             self._variables["injector_pressure_drop"].get(),
@@ -443,6 +592,9 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         if pressure_mode is None:
             errors.append("Pressure mode is invalid.")
             pressure_mode = PressureCalculationMode.BACKWARD_REQUIRED_PUMP
+        if bartz_curvature_mode is None:
+            errors.append("Bartz throat curvature selection is invalid.")
+            bartz_curvature_mode = BartzThroatCurvatureMode.UPSTREAM
         if flow_direction is None:
             errors.append("Cooling flow direction is invalid.")
             flow_direction = CoolingFlowDirection.NOZZLE_TO_INJECTOR
@@ -458,6 +610,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             ),
             "annulus_gap_m": _convert_lengthless_quantity(annulus_gap, "length", self._unit_preset),
             "coolant_roughness_m": _convert_lengthless_quantity(roughness, "length", self._unit_preset),
+            "bartz_throat_curvature_mode": bartz_curvature_mode,
             "pressure_mode": pressure_mode,
             "injector_pressure_drop_pa": _convert_lengthless_quantity(
                 injector_pressure_drop,
@@ -489,7 +642,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         model_type = _MODEL_TYPE_VALUES.get(self._variables["model_type"].get(), ThermalModelType.ANNULUS)
         if model_type is ThermalModelType.ANNULUS:
             self._model_note_var.set(
-                "Annulus cooling is the active MVP reference model. It uses the current inner contour r(x), a uniform annulus gap and a separate post-processed pressure reconstruction. The coolant-side correlations assume fully developed annular flow everywhere. That is conservative for wall heat transfer because real inlet regions often have stronger eddies and therefore higher local h-values than this baseline."
+                "Annulus cooling is the active MVP reference model. It uses the current inner contour r(x), a uniform annulus gap and a separate post-processed pressure reconstruction. The gas-side heat transfer now uses a steady-state Bartz-style correlation based on the existing CEA/profile properties and the selected throat-curvature reference. The coolant-side correlations assume fully developed annular flow everywhere. That is conservative for wall heat transfer because real inlet regions often have stronger eddies and therefore higher local h-values than this baseline."
             )
             return
         self._model_note_var.set(
@@ -510,6 +663,374 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             )
 
 
+class RadiationCard(ttk.LabelFrame):
+    """Optional advanced radiation settings for the Thermal Analysis MVP."""
+
+    def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset) -> None:
+        super().__init__(master, text="Radiation", padding=12)
+        self._unit_preset = unit_preset
+        self._expanded = False
+        self.columnconfigure(0, weight=1)
+        self._field_labels: dict[str, ttk.Label] = {}
+        self._variables = {
+            "enabled": tk.BooleanVar(value=False),
+            "model": tk.StringVar(value=_RADIATION_MODEL_LABELS[RadiationModelType.GREY_GAS]),
+            "wall_emissivity": tk.StringVar(value="0.8"),
+            "gas_effective_emissivity": tk.StringVar(value="0.15"),
+            "temperature_source": tk.StringVar(
+                value=_RADIATION_TEMPERATURE_SOURCE_LABELS[RadiationTemperatureSource.LOCAL_GAS_TEMPERATURE]
+            ),
+            "participating_media_enabled": tk.BooleanVar(value=False),
+            "participating_media_model": tk.StringVar(
+                value=_PARTICIPATING_MEDIA_MODEL_LABELS[ParticipatingMediaModelType.EFFECTIVE_EMISSIVITY]
+            ),
+            "participating_species_mode": tk.StringVar(
+                value=_PARTICIPATING_SPECIES_MODE_LABELS[ParticipatingSpeciesMode.CO2_H2O_ONLY]
+            ),
+            "optical_path_length_mode": tk.StringVar(
+                value=_OPTICAL_PATH_LENGTH_MODE_LABELS[OpticalPathLengthMode.LOCAL_DIAMETER]
+            ),
+            "user_optical_path_length": tk.StringVar(value=""),
+            "co2_mole_fraction": tk.StringVar(value=""),
+            "h2o_mole_fraction": tk.StringVar(value=""),
+            "soot_factor": tk.StringVar(value="0.0"),
+            "fixed_heat_flux": tk.StringVar(value=""),
+        }
+        self._details_frame = ttk.Frame(self)
+        self._details_frame.columnconfigure(1, weight=1)
+        self._interactive_widgets: list[tk.Widget] = []
+        self._participating_widgets: list[tk.Widget] = []
+        self._fixed_flux_widgets: list[tk.Widget] = []
+        self._user_optical_widgets: list[tk.Widget] = []
+        self._variables["enabled"].trace_add("write", self._handle_state_changed)
+        self._variables["participating_media_enabled"].trace_add("write", self._handle_state_changed)
+        self._variables["model"].trace_add("write", self._handle_state_changed)
+        self._variables["optical_path_length_mode"].trace_add("write", self._handle_state_changed)
+        self._build_widgets()
+
+    def _build_widgets(self) -> None:
+        header = ttk.Frame(self)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        ttk.Checkbutton(
+            header,
+            text="Enable radiation heat transfer",
+            variable=self._variables["enabled"],
+        ).grid(row=0, column=0, sticky="w")
+        self._toggle_button = ttk.Button(header, text="Show radiation settings", command=self._toggle_details)
+        self._toggle_button.grid(row=0, column=2, sticky="e")
+
+        ttk.Label(
+            self,
+            text=(
+                "Optional advanced screening feature. Radiation is OFF by default so the standard annulus result stays "
+                "identical to the convection-only baseline unless you explicitly enable it."
+            ),
+            wraplength=980,
+            justify="left",
+            foreground="#667381",
+        ).grid(row=1, column=0, sticky="ew", pady=(6, 0))
+
+        details = self._details_frame
+        details.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+
+        ttk.Label(details, text="Radiation model").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        model_combo = ttk.Combobox(
+            details,
+            state="readonly",
+            textvariable=self._variables["model"],
+            values=list(_RADIATION_MODEL_VALUES),
+        )
+        model_combo.grid(row=0, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(model_combo)
+
+        self._field_labels["wall_emissivity"] = ttk.Label(details)
+        self._field_labels["wall_emissivity"].grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
+        wall_entry = ttk.Entry(details, textvariable=self._variables["wall_emissivity"])
+        wall_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(wall_entry)
+
+        self._field_labels["gas_effective_emissivity"] = ttk.Label(details)
+        self._field_labels["gas_effective_emissivity"].grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
+        gas_entry = ttk.Entry(details, textvariable=self._variables["gas_effective_emissivity"])
+        gas_entry.grid(row=2, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(gas_entry)
+
+        ttk.Label(details, text="Radiation temperature source").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
+        temp_combo = ttk.Combobox(
+            details,
+            state="readonly",
+            textvariable=self._variables["temperature_source"],
+            values=list(_RADIATION_TEMPERATURE_SOURCE_VALUES),
+        )
+        temp_combo.grid(row=3, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(temp_combo)
+
+        participating_toggle = ttk.Checkbutton(
+            details,
+            text="Participating media",
+            variable=self._variables["participating_media_enabled"],
+        )
+        participating_toggle.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        self._interactive_widgets.append(participating_toggle)
+
+        ttk.Label(details, text="Participating media model").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        participating_combo = ttk.Combobox(
+            details,
+            state="readonly",
+            textvariable=self._variables["participating_media_model"],
+            values=list(_PARTICIPATING_MEDIA_MODEL_VALUES),
+        )
+        participating_combo.grid(row=5, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(participating_combo)
+        self._participating_widgets.append(participating_combo)
+
+        ttk.Label(details, text="Participating species mode").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
+        species_mode_combo = ttk.Combobox(
+            details,
+            state="readonly",
+            textvariable=self._variables["participating_species_mode"],
+            values=list(_PARTICIPATING_SPECIES_MODE_VALUES),
+        )
+        species_mode_combo.grid(row=6, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(species_mode_combo)
+        self._participating_widgets.append(species_mode_combo)
+
+        ttk.Label(details, text="Optical path length mode").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
+        optical_combo = ttk.Combobox(
+            details,
+            state="readonly",
+            textvariable=self._variables["optical_path_length_mode"],
+            values=list(_OPTICAL_PATH_LENGTH_MODE_VALUES),
+        )
+        optical_combo.grid(row=7, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(optical_combo)
+        self._participating_widgets.append(optical_combo)
+
+        self._field_labels["user_optical_path_length"] = ttk.Label(details)
+        self._field_labels["user_optical_path_length"].grid(row=8, column=0, sticky="w", padx=(0, 10), pady=4)
+        user_optical_entry = ttk.Entry(details, textvariable=self._variables["user_optical_path_length"])
+        user_optical_entry.grid(row=8, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(user_optical_entry)
+        self._participating_widgets.append(user_optical_entry)
+        self._user_optical_widgets.append(user_optical_entry)
+
+        self._field_labels["co2_mole_fraction"] = ttk.Label(details)
+        self._field_labels["co2_mole_fraction"].grid(row=9, column=0, sticky="w", padx=(0, 10), pady=4)
+        co2_entry = ttk.Entry(details, textvariable=self._variables["co2_mole_fraction"])
+        co2_entry.grid(row=9, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(co2_entry)
+        self._participating_widgets.append(co2_entry)
+
+        self._field_labels["h2o_mole_fraction"] = ttk.Label(details)
+        self._field_labels["h2o_mole_fraction"].grid(row=10, column=0, sticky="w", padx=(0, 10), pady=4)
+        h2o_entry = ttk.Entry(details, textvariable=self._variables["h2o_mole_fraction"])
+        h2o_entry.grid(row=10, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(h2o_entry)
+        self._participating_widgets.append(h2o_entry)
+
+        self._field_labels["soot_factor"] = ttk.Label(details)
+        self._field_labels["soot_factor"].grid(row=11, column=0, sticky="w", padx=(0, 10), pady=4)
+        soot_entry = ttk.Entry(details, textvariable=self._variables["soot_factor"])
+        soot_entry.grid(row=11, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(soot_entry)
+        self._participating_widgets.append(soot_entry)
+
+        self._field_labels["fixed_heat_flux"] = ttk.Label(details)
+        self._field_labels["fixed_heat_flux"].grid(row=12, column=0, sticky="w", padx=(0, 10), pady=4)
+        fixed_heat_flux_entry = ttk.Entry(details, textvariable=self._variables["fixed_heat_flux"])
+        fixed_heat_flux_entry.grid(row=12, column=1, sticky="ew", pady=4)
+        self._interactive_widgets.append(fixed_heat_flux_entry)
+        self._fixed_flux_widgets.append(fixed_heat_flux_entry)
+
+        ttk.Label(
+            details,
+            text=(
+                "This is a screening-level model only. It adds a separate radiative heat-flux term on top of Bartz "
+                "convection and prefers local CEA station mole fractions when participating media is enabled. It does not represent a spectral radiation solution."
+            ),
+            wraplength=960,
+            justify="left",
+            foreground="#7d4d1b",
+        ).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        self._apply_unit_labels()
+        self._details_frame.grid_remove()
+        self._refresh_widget_states()
+
+    def _toggle_details(self) -> None:
+        self._expanded = not self._expanded
+        if self._expanded:
+            self._details_frame.grid()
+            self._toggle_button.configure(text="Hide radiation settings")
+        else:
+            self._details_frame.grid_remove()
+            self._toggle_button.configure(text="Show radiation settings")
+
+    def _handle_state_changed(self, *_args: object) -> None:
+        self._refresh_widget_states()
+
+    def _refresh_widget_states(self) -> None:
+        enabled = self._variables["enabled"].get()
+        use_participating = enabled and (
+            self._variables["participating_media_enabled"].get()
+            or _RADIATION_MODEL_VALUES.get(self._variables["model"].get())
+            is RadiationModelType.PARTICIPATING_MEDIA_EFFECTIVE_EMISSIVITY
+        )
+        use_fixed_heat_flux = enabled and (
+            _RADIATION_MODEL_VALUES.get(self._variables["model"].get())
+            is RadiationModelType.USER_FIXED_HEAT_FLUX
+        )
+        user_optical = use_participating and (
+            _OPTICAL_PATH_LENGTH_MODE_VALUES.get(self._variables["optical_path_length_mode"].get())
+            is OpticalPathLengthMode.USER_FIXED
+        )
+
+        for widget in self._interactive_widgets:
+            self._set_widget_state(widget, enabled)
+        for widget in self._participating_widgets:
+            self._set_widget_state(widget, use_participating)
+        for widget in self._fixed_flux_widgets:
+            self._set_widget_state(widget, use_fixed_heat_flux)
+        for widget in self._user_optical_widgets:
+            self._set_widget_state(widget, user_optical)
+
+    @staticmethod
+    def _set_widget_state(widget: tk.Widget, enabled: bool) -> None:
+        if isinstance(widget, ttk.Combobox):
+            widget.configure(state="readonly" if enabled else "disabled")
+            return
+        widget.configure(state="normal" if enabled else "disabled")
+
+    def _apply_unit_labels(self) -> None:
+        self._field_labels["wall_emissivity"].configure(text="Wall emissivity [-]")
+        self._field_labels["gas_effective_emissivity"].configure(text="Gas effective emissivity fallback [-]")
+        self._field_labels["user_optical_path_length"].configure(
+            text=f"User optical path length [{get_unit_symbol('length', self._unit_preset)}]"
+        )
+        self._field_labels["co2_mole_fraction"].configure(text="Fallback CO2 mole fraction [-]")
+        self._field_labels["h2o_mole_fraction"].configure(text="Fallback H2O mole fraction [-]")
+        self._field_labels["soot_factor"].configure(text="Soot factor [-]")
+        self._field_labels["fixed_heat_flux"].configure(
+            text=f"Fixed radiation heat flux [{get_unit_symbol('heat_flux', self._unit_preset)}]"
+        )
+
+    def set_unit_preset(self, unit_preset: UnitPreset) -> None:
+        self._unit_preset = unit_preset
+        self._apply_unit_labels()
+
+    def set_inputs(self, inputs: ThermalAnalysisInputs) -> None:
+        settings = inputs.radiation_settings
+        self._variables["enabled"].set(settings.enabled)
+        self._variables["model"].set(_RADIATION_MODEL_LABELS[settings.model])
+        self._variables["wall_emissivity"].set(f"{settings.wall_emissivity:.4g}")
+        self._variables["gas_effective_emissivity"].set(f"{settings.gas_effective_emissivity:.4g}")
+        self._variables["temperature_source"].set(
+            _RADIATION_TEMPERATURE_SOURCE_LABELS[settings.radiation_temperature_source]
+        )
+        self._variables["participating_media_enabled"].set(settings.participating_media_enabled)
+        self._variables["participating_media_model"].set(
+            _PARTICIPATING_MEDIA_MODEL_LABELS[settings.participating_media_model]
+        )
+        self._variables["participating_species_mode"].set(
+            _PARTICIPATING_SPECIES_MODE_LABELS[settings.participating_species_mode]
+        )
+        self._variables["optical_path_length_mode"].set(
+            _OPTICAL_PATH_LENGTH_MODE_LABELS[settings.optical_path_length_mode]
+        )
+        self._variables["user_optical_path_length"].set(
+            "" if settings.user_optical_path_length_m is None else format_quantity(settings.user_optical_path_length_m, "length", self._unit_preset)
+        )
+        self._variables["co2_mole_fraction"].set(
+            "" if settings.co2_mole_fraction is None else f"{settings.co2_mole_fraction:.4g}"
+        )
+        self._variables["h2o_mole_fraction"].set(
+            "" if settings.h2o_mole_fraction is None else f"{settings.h2o_mole_fraction:.4g}"
+        )
+        self._variables["soot_factor"].set(f"{settings.soot_factor:.4g}")
+        self._variables["fixed_heat_flux"].set(
+            "" if settings.fixed_radiation_heat_flux_w_per_m2 is None else format_quantity(settings.fixed_radiation_heat_flux_w_per_m2, "heat_flux", self._unit_preset)
+        )
+        if settings.enabled and not self._expanded:
+            self._toggle_details()
+        self._refresh_widget_states()
+
+    def get_settings(self) -> RadiationSettings:
+        errors: list[str] = []
+        enabled = self._variables["enabled"].get()
+        model = _RADIATION_MODEL_VALUES.get(self._variables["model"].get())
+        temperature_source = _RADIATION_TEMPERATURE_SOURCE_VALUES.get(self._variables["temperature_source"].get())
+        participating_media_model = _PARTICIPATING_MEDIA_MODEL_VALUES.get(
+            self._variables["participating_media_model"].get()
+        )
+        participating_species_mode = _PARTICIPATING_SPECIES_MODE_VALUES.get(
+            self._variables["participating_species_mode"].get()
+        )
+        optical_path_length_mode = _OPTICAL_PATH_LENGTH_MODE_VALUES.get(
+            self._variables["optical_path_length_mode"].get()
+        )
+        wall_emissivity = _parse_required_float(self._variables["wall_emissivity"].get(), "Wall emissivity", errors)
+        gas_effective_emissivity = _parse_required_float(
+            self._variables["gas_effective_emissivity"].get(),
+            "Gas effective emissivity",
+            errors,
+        )
+        soot_factor = _parse_required_float(self._variables["soot_factor"].get(), "Soot factor", errors)
+        user_optical_path_length = _parse_optional_float(
+            self._variables["user_optical_path_length"].get(),
+            "User optical path length",
+            errors,
+        )
+        fixed_heat_flux = _parse_optional_float(
+            self._variables["fixed_heat_flux"].get(),
+            "Fixed radiation heat flux",
+            errors,
+        )
+        co2_mole_fraction = _parse_optional_float(self._variables["co2_mole_fraction"].get(), "CO2 mole fraction", errors)
+        h2o_mole_fraction = _parse_optional_float(self._variables["h2o_mole_fraction"].get(), "H2O mole fraction", errors)
+        if model is None:
+            errors.append("Radiation model is invalid.")
+            model = RadiationModelType.GREY_GAS
+        if temperature_source is None:
+            errors.append("Radiation temperature source is invalid.")
+            temperature_source = RadiationTemperatureSource.LOCAL_GAS_TEMPERATURE
+        if participating_media_model is None:
+            errors.append("Participating media model is invalid.")
+            participating_media_model = ParticipatingMediaModelType.EFFECTIVE_EMISSIVITY
+        if participating_species_mode is None:
+            errors.append("Participating species mode is invalid.")
+            participating_species_mode = ParticipatingSpeciesMode.CO2_H2O_ONLY
+        if optical_path_length_mode is None:
+            errors.append("Optical path length mode is invalid.")
+            optical_path_length_mode = OpticalPathLengthMode.LOCAL_DIAMETER
+        if errors:
+            raise InputValidationError(errors)
+        return RadiationSettings(
+            enabled=enabled,
+            model=model,
+            wall_emissivity=wall_emissivity,
+            gas_effective_emissivity=gas_effective_emissivity,
+            radiation_temperature_source=temperature_source,
+            participating_media_enabled=self._variables["participating_media_enabled"].get(),
+            participating_media_model=participating_media_model,
+            participating_species_mode=participating_species_mode,
+            co2_mole_fraction=co2_mole_fraction,
+            h2o_mole_fraction=h2o_mole_fraction,
+            optical_path_length_mode=optical_path_length_mode,
+            user_optical_path_length_m=_convert_lengthless_quantity(
+                user_optical_path_length,
+                "length",
+                self._unit_preset,
+            ),
+            soot_factor=soot_factor,
+            fixed_radiation_heat_flux_w_per_m2=_convert_lengthless_quantity(
+                fixed_heat_flux,
+                "heat_flux",
+                self._unit_preset,
+            ),
+        )
+
+
 class SolverSettingsCard(ttk.LabelFrame):
     """Editable station-solver settings for the MVP annulus model."""
 
@@ -520,7 +1041,7 @@ class SolverSettingsCard(ttk.LabelFrame):
             "solver_type": tk.StringVar(value=_SOLVER_TYPE_LABELS[ThermalSolverType.NTU_EXPONENTIAL]),
             "station_distribution_mode": tk.StringVar(value=_STATION_MODE_LABELS[StationDistributionMode.MANUAL]),
             "station_count": tk.StringVar(value="32"),
-            "station_tolerance": tk.StringVar(value="1e-5"),
+            "station_tolerance": tk.StringVar(value="0.1"),
             "max_iterations": tk.StringVar(value="25"),
             "relaxation_factor": tk.StringVar(value="0.6"),
         }
@@ -821,7 +1342,22 @@ class ThermalStationResultsTable(ttk.LabelFrame):
         "nu_coolant",
         "friction_factor",
         "thermal_margin",
-        "status",
+        "wall_mean_temperature",
+        "pressure_delta",
+        "hoop_stress",
+        "longitudinal_stress",
+        "thermal_strain",
+        "thermal_stress",
+        "von_mises_stress",
+        "material_yield_strength",
+        "material_strength_margin",
+        "total_screening_strain",
+        "material_margin_status",
+        "closeout_thickness",
+        "closeout_hoop_stress",
+        "closeout_material_strength_margin",
+        "status_summary",
+        "warning_summary",
     )
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset) -> None:
@@ -840,6 +1376,11 @@ class ThermalStationResultsTable(ttk.LabelFrame):
         self._configure_columns()
 
     def _configure_columns(self) -> None:
+        stress_unit = get_unit_symbol("stress", self._unit_preset)
+
+        def stress_heading(base_label: str) -> str:
+            return f"{base_label} [{stress_unit}]" if stress_unit else base_label
+
         headings = {
             "station_index": "Station index i",
             "x_start": "x_start",
@@ -870,15 +1411,38 @@ class ThermalStationResultsTable(ttk.LabelFrame):
             "nu_coolant": "Nu_coolant",
             "friction_factor": "friction_factor",
             "thermal_margin": "thermal_margin",
-            "status": "warning/status",
+            "wall_mean_temperature": "T_wall_mean",
+            "pressure_delta": "Delta_p_wall",
+            "hoop_stress": stress_heading("sigma_hoop"),
+            "longitudinal_stress": stress_heading("sigma_longitudinal"),
+            "thermal_strain": "epsilon_thermal",
+            "thermal_stress": stress_heading("sigma_thermal_indicator"),
+            "von_mises_stress": stress_heading("sigma_vm"),
+            "material_yield_strength": stress_heading("yield_strength"),
+            "material_strength_margin": "screening_margin_Rp0.2(T)",
+            "total_screening_strain": "epsilon_total",
+            "material_margin_status": "material_margin_status",
+            "closeout_thickness": "closeout_thickness",
+            "closeout_hoop_stress": stress_heading("sigma_closeout"),
+            "closeout_material_strength_margin": "closeout_margin",
+            "status_summary": "status",
+            "warning_summary": "warnings",
         }
         for key in self._COLUMNS:
             self._tree.heading(key, text=headings[key])
-            width = 110 if key != "status" else 220
+            if key == "status_summary":
+                width = 220
+            elif key == "warning_summary":
+                width = 320
+            elif key == "material_margin_status":
+                width = 130
+            else:
+                width = 110
             self._tree.column(key, width=width, stretch=False, anchor="center")
 
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         self._unit_preset = unit_preset
+        self._configure_columns()
         if self._result is not None:
             self.update_result(self._result)
 
@@ -925,7 +1489,22 @@ class ThermalStationResultsTable(ttk.LabelFrame):
                     _fmt_dimensionless(station.nusselt_coolant),
                     _fmt_dimensionless(station.friction_factor),
                     _fmt_quantity(station.thermal_margin_k, "temperature", self._unit_preset),
-                    station.status,
+                    _fmt_quantity(station.wall_mean_temperature_k, "temperature", self._unit_preset),
+                    _fmt_quantity(station.pressure_delta_pa, "pressure", self._unit_preset),
+                    _fmt_quantity(station.hoop_stress_pa, "stress", self._unit_preset),
+                    _fmt_quantity(station.longitudinal_stress_pa, "stress", self._unit_preset),
+                    _fmt_dimensionless(station.thermal_strain),
+                    _fmt_quantity(station.thermal_stress_pa, "stress", self._unit_preset),
+                    _fmt_quantity(station.equivalent_von_mises_stress_pa, "stress", self._unit_preset),
+                    _fmt_quantity(station.material_yield_strength_pa, "stress", self._unit_preset),
+                    _fmt_dimensionless(station.material_strength_margin),
+                    _fmt_dimensionless(station.total_screening_strain),
+                    station.material_margin_status or "--",
+                    _fmt_quantity(station.closeout_thickness_m, "length", self._unit_preset),
+                    _fmt_quantity(station.closeout_hoop_stress_pa, "stress", self._unit_preset),
+                    _fmt_dimensionless(station.closeout_material_strength_margin),
+                    station.status_summary,
+                    station.warning_summary,
                 ),
             )
 
@@ -1209,18 +1788,21 @@ class ThermalAnalysisPage(ttk.Frame):
         self._solver_card = SolverSettingsCard(input_row)
         self._solver_card.grid(row=0, column=1, sticky="nsew")
 
+        self._radiation_card = RadiationCard(content, unit_preset=unit_preset)
+        self._radiation_card.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+
         self._future_channel_panel = FutureChannelDefinitionPanel(content)
-        self._future_channel_panel.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        self._future_channel_panel.grid(row=4, column=0, sticky="ew", pady=(12, 0))
 
         self._action_row = ThermalActionRow(content)
-        self._action_row.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        self._action_row.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         self._action_row.bind_open_plot(self.open_plot_window)
 
         self._summary_tiles = ThermalSummaryTiles(content, unit_preset=unit_preset)
-        self._summary_tiles.grid(row=5, column=0, sticky="ew", pady=(12, 0))
+        self._summary_tiles.grid(row=6, column=0, sticky="ew", pady=(12, 0))
 
         self._results_table = ThermalStationResultsTable(content, unit_preset=unit_preset)
-        self._results_table.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        self._results_table.grid(row=7, column=0, sticky="nsew", pady=(12, 0))
 
     def bind_calculate(self, callback: Callable[[], None]) -> None:
         self._action_row.bind_calculate(callback)
@@ -1232,16 +1814,18 @@ class ThermalAnalysisPage(ttk.Frame):
         self._unit_preset = unit_preset
         self._context_card.set_unit_preset(unit_preset)
         self._annulus_card.set_unit_preset(unit_preset)
+        self._radiation_card.set_unit_preset(unit_preset)
         self._summary_tiles.set_unit_preset(unit_preset)
         self._results_table.set_unit_preset(unit_preset)
         if self._plot_window is not None and self._plot_window.winfo_exists():
             self._plot_window.set_unit_preset(unit_preset)
         if self._cached_inputs is not None:
-            self._annulus_card.set_inputs(self._cached_inputs)
+            self.set_inputs(self._cached_inputs)
 
     def set_inputs(self, inputs: ThermalAnalysisInputs) -> None:
         self._cached_inputs = inputs
         self._annulus_card.set_inputs(inputs)
+        self._radiation_card.set_inputs(inputs)
         self._solver_card.set_inputs(inputs.solver_settings)
 
     def get_inputs(self) -> ThermalAnalysisInputs:
@@ -1258,8 +1842,10 @@ class ThermalAnalysisPage(ttk.Frame):
             pressure_margin_pa=float(partial_inputs["pressure_margin_pa"]),
             external_feed_pressure_drop_pa=float(partial_inputs["external_feed_pressure_drop_pa"]),
             pump_discharge_pressure_pa=partial_inputs["pump_discharge_pressure_pa"],
+            bartz_throat_curvature_mode=partial_inputs["bartz_throat_curvature_mode"],
             flow_direction=partial_inputs["flow_direction"],
             solver_settings=solver_settings,
+            radiation_settings=self._radiation_card.get_settings(),
         )
         inputs.solver_settings.pressure_mode = partial_inputs["pressure_mode"]
         self._cached_inputs = inputs
@@ -1271,14 +1857,18 @@ class ThermalAnalysisPage(ttk.Frame):
         current_inputs: InputParameters | None,
         current_bundle: ExportBundle | None,
         thermal_inputs: ThermalAnalysisInputs,
+        design_status_label: str,
         geometry_source_label: str,
+        contour_status_label: str,
         profile_station_count: int | None,
     ) -> None:
         self._context_card.update_context(
             current_inputs=current_inputs,
             current_bundle=current_bundle,
             thermal_inputs=thermal_inputs,
+            design_status_label=design_status_label,
             geometry_source_label=geometry_source_label,
+            contour_status_label=contour_status_label,
         )
         self._solver_card.set_profile_station_count(profile_station_count)
 

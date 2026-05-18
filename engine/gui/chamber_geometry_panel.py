@@ -17,7 +17,9 @@ from engine.chamber_geometry import (
     NASA_LSTAR_SOURCE,
     StoredChamberGeometryCalculation,
     WorkingChamberGeometryState,
+    apply_chamber_geometry_result_to_inputs,
     calculate_chamber_geometry,
+    chamber_geometry_result_input_updates,
     estimate_contraction_ratio_guidance,
     get_lstar_range,
     infer_lstar_mode,
@@ -900,17 +902,27 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             self._status_var.set(str(exc))
             return
 
+        base_inputs = self._runtime_inputs
+        if base_inputs is None:
+            self._status_var.set("Current Design inputs are not available for chamber-geometry handoff.")
+            return
+        mapped_inputs = apply_chamber_geometry_result_to_inputs(base_inputs, result)
+        mapped_updates, handoff_notes = chamber_geometry_result_input_updates(base_inputs, result)
         self._stored_geometry_update = {
-            "contraction_ratio": result.contraction_ratio,
-            "convergent_half_angle_deg": result.convergent_half_angle_deg,
-            "chamber_corner_radius_m": result.corner_radius_m,
+            **mapped_updates,
             "throat_upstream_radius_m": (self._committed_throat_upstream_ratio or 0.0) * (0.5 * result.throat_diameter_m),
             "throat_downstream_radius_m": (self._committed_throat_downstream_ratio or 0.0) * (0.5 * result.throat_diameter_m),
         }
         self._stored_calculation = StoredChamberGeometryCalculation(
             working_state=state,
             result=result,
-            notes=["Stored from Apply Chamber Geometry."],
+            notes=[
+                "Stored from Apply Chamber Geometry.",
+                f"Explicit InputParameters handoff uses L*={mapped_inputs.characteristic_length_m:.4f} m, "
+                f"epsilon_c={mapped_inputs.contraction_ratio:.4f}, "
+                f"theta={mapped_inputs.convergent_half_angle_deg:.2f} deg and corner radius={mapped_inputs.chamber_corner_radius_m:.5f} m.",
+                *handoff_notes,
+            ],
         )
         self._stored_calc_var.set(
             "Last Geometry Calculation: stored from Apply Chamber Geometry "

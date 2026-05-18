@@ -9,6 +9,7 @@ NEWTONS_PER_TF = 9_806.65
 PASCALS_PER_BAR = 100_000.0
 PASCALS_PER_MPA = 1_000_000.0
 PASCALS_PER_PSI = 6_894.757293168
+PASCALS_PER_KSI = PASCALS_PER_PSI * 1_000.0
 METERS_PER_MILLIMETER = 1.0e-3
 METERS_PER_INCH = 0.0254
 METERS_PER_FOOT = 0.3048
@@ -57,6 +58,7 @@ UNIT_SPECS: dict[UnitPreset, dict[str, UnitSpec]] = {
     UnitPreset.SI: {
         "force": UnitSpec("N", 1.0, decimals=2),
         "pressure": UnitSpec("Pa", 1.0, decimals=0),
+        "stress": UnitSpec("MPa", 1.0 / PASCALS_PER_MPA, decimals=3),
         "length": UnitSpec("m", 1.0, decimals=4),
         "area": UnitSpec("m^2", 1.0, decimals=6),
         "volume": UnitSpec("m^3", 1.0, decimals=6),
@@ -78,6 +80,7 @@ UNIT_SPECS: dict[UnitPreset, dict[str, UnitSpec]] = {
     UnitPreset.SI_CAD: {
         "force": UnitSpec("kN", 1.0e-3, decimals=3),
         "pressure": UnitSpec("bar", 1.0 / PASCALS_PER_BAR, decimals=4),
+        "stress": UnitSpec("N/mm^2", 1.0 / PASCALS_PER_MPA, decimals=3),
         "length": UnitSpec("mm", 1.0 / METERS_PER_MILLIMETER, decimals=2),
         "area": UnitSpec("mm^2", 1.0 / (METERS_PER_MILLIMETER**2), decimals=2),
         "volume": UnitSpec("mm^3", 1.0 / (METERS_PER_MILLIMETER**3), decimals=2),
@@ -99,6 +102,7 @@ UNIT_SPECS: dict[UnitPreset, dict[str, UnitSpec]] = {
     UnitPreset.US: {
         "force": UnitSpec("lbf", 1.0 / 4.4482216152605, decimals=2),
         "pressure": UnitSpec("psia", 1.0 / PASCALS_PER_PSI, decimals=3),
+        "stress": UnitSpec("ksi", 1.0 / PASCALS_PER_KSI, decimals=3),
         "length": UnitSpec("in", 1.0 / METERS_PER_INCH, decimals=3),
         "area": UnitSpec("in^2", 1.0 / SQUARE_METERS_PER_SQUARE_INCH, decimals=3),
         "volume": UnitSpec("in^3", 1.0 / CUBIC_METERS_PER_CUBIC_INCH, decimals=3),
@@ -120,6 +124,7 @@ UNIT_SPECS: dict[UnitPreset, dict[str, UnitSpec]] = {
     UnitPreset.COMMON: {
         "force": UnitSpec("kN", 1.0e-3, decimals=3),
         "pressure": UnitSpec("bar", 1.0 / PASCALS_PER_BAR, decimals=4),
+        "stress": UnitSpec("MPa", 1.0 / PASCALS_PER_MPA, decimals=3),
         "length": UnitSpec("mm", 1.0 / METERS_PER_MILLIMETER, decimals=2),
         "area": UnitSpec("cm^2", 10_000.0, decimals=3),
         "volume": UnitSpec("cm^3", 1_000_000.0, decimals=3),

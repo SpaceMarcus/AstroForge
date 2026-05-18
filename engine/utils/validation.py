@@ -96,6 +96,11 @@ def validate_input_parameters(inputs: InputParameters) -> list[str]:
         errors.append("Manufacturing route is invalid.")
     if not isinstance(inputs.wall_thickness_mode, WallThicknessMode):
         errors.append("Wall-thickness mode is invalid.")
+    if inputs.closeout_enabled:
+        if inputs.closeout_thickness_m is None or not _is_finite_positive(inputs.closeout_thickness_m):
+            errors.append("Closeout thickness must be greater than 0 m when closeout is enabled.")
+        if inputs.closeout_material is None or not inputs.closeout_material.strip():
+            errors.append("Closeout material must be selected when closeout is enabled.")
     if inputs.wall_thickness_mode is WallThicknessMode.CONSTANT:
         if inputs.wall_thickness_m is None or not _is_finite_positive(inputs.wall_thickness_m):
             errors.append(

@@ -1,0 +1,445 @@
+{
+  "metadata": {
+    "name": "AstraForge solid material properties screening table v1",
+    "generated_utc": "2026-05-18T09:00:00Z",
+    "intended_use": "Predesign/screening lookup for thermal and mechanical analysis; not certified design allowables.",
+    "schema_version": "0.2",
+    "units": {
+      "T_K": "K",
+      "rho_kg_m3": "kg/m^3",
+      "cp_J_kgK": "J/(kg*K)",
+      "k_W_mK": "W/(m*K)",
+      "youngs_modulus_pa": "Pa",
+      "poisson_ratio": "1",
+      "cte_1_per_K": "1/K",
+      "yield_strength_pa": "Pa",
+      "ultimate_tensile_strength_pa": "Pa"
+    },
+    "global_notes": [
+      "Use Rp0.2/yield for screening margins, not UTS.",
+      "Outside-range lookups are clamped to the nearest endpoint and must be reported.",
+      "GRCop-42 mechanical data are especially process-dependent and incomplete at high temperature.",
+      "These values are screening data only and are not qualified design allowables."
+    ]
+  },
+  "materials": [
+    {
+      "id": "CUCRZR",
+      "display_name": "CuCrZr",
+      "aliases": [
+        "CuCrZr",
+        "cucrzr",
+        "Cu-Cr-Zr",
+        "copper chromium zirconium",
+        "C18150"
+      ],
+      "source_label": "Materials/Applied Sciences rocket thrust-chamber thermostructural FEM screening data",
+      "source_url": "https://www.mdpi.com/2076-3417/12/7/3443",
+      "source_notes": "Literature screening data used in rocket thrust chamber FEM papers; use Rp0.2/yield for screening only.",
+      "table": [
+        {
+          "T_K": 300.0,
+          "rho_kg_m3": 8933.0,
+          "cp_J_kgK": 390.0,
+          "k_W_mK": 320.0,
+          "youngs_modulus_pa": 130000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.57e-05,
+          "yield_strength_pa": 433900000.0,
+          "ultimate_tensile_strength_pa": 477900000.0
+        },
+        {
+          "T_K": 500.0,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 106000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 383300000.0,
+          "ultimate_tensile_strength_pa": 402900000.0
+        },
+        {
+          "T_K": 600.0,
+          "rho_kg_m3": 8933.0,
+          "cp_J_kgK": 390.0,
+          "k_W_mK": 290.0,
+          "youngs_modulus_pa": null,
+          "poisson_ratio": null,
+          "cte_1_per_K": 1.79e-05,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 700.0,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 87000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 313000000.0,
+          "ultimate_tensile_strength_pa": 329400000.0
+        },
+        {
+          "T_K": 900.0,
+          "rho_kg_m3": 8933.0,
+          "cp_J_kgK": 400.0,
+          "k_W_mK": 255.0,
+          "youngs_modulus_pa": 44000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.87e-05,
+          "yield_strength_pa": 156300000.0,
+          "ultimate_tensile_strength_pa": 174500000.0
+        }
+      ]
+    },
+    {
+      "id": "INCONEL718",
+      "display_name": "Inconel 718",
+      "aliases": [
+        "Inconel 718",
+        "IN718",
+        "in718",
+        "Alloy 718",
+        "UNS N07718",
+        "2.4668"
+      ],
+      "source_label": "Special Metals INCONEL alloy 718 technical bulletin SMC-045",
+      "source_url": "https://www.specialmetals.com/documents/technical-bulletins/inconel/inconel-alloy-718.pdf",
+      "source_notes": "Typical/informational values only. Mechanical properties depend on heat treatment and product form; use for MVP screening only.",
+      "table": [
+        {
+          "T_K": 294.26,
+          "rho_kg_m3": 8190.0,
+          "cp_J_kgK": 435.0,
+          "k_W_mK": 11.4,
+          "youngs_modulus_pa": 199950000000.0,
+          "poisson_ratio": 0.294,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 1123840000.0,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 310.93,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 198570000000.0,
+          "poisson_ratio": 0.291,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 366.48,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 195810000000.0,
+          "poisson_ratio": 0.288,
+          "cte_1_per_K": 1.3158e-05,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 422.04,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 193050000000.0,
+          "poisson_ratio": 0.28,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 477.59,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 190300000000.0,
+          "poisson_ratio": 0.28,
+          "cte_1_per_K": 1.3554e-05,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 533.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 186850000000.0,
+          "poisson_ratio": 0.275,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 588.71,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 184090000000.0,
+          "poisson_ratio": 0.272,
+          "cte_1_per_K": 1.3932e-05,
+          "yield_strength_pa": 1075580000.0,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 644.26,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 180640000000.0,
+          "poisson_ratio": 0.273,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 699.82,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 177880000000.0,
+          "poisson_ratio": 0.271,
+          "cte_1_per_K": 1.4346e-05,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 755.37,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 174430000000.0,
+          "poisson_ratio": 0.272,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 810.93,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 171990000000.0,
+          "poisson_ratio": 0.271,
+          "cte_1_per_K": 1.4562e-05,
+          "yield_strength_pa": 1020420000.0,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 866.48,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 166850000000.0,
+          "poisson_ratio": 0.276,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 922.04,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 163400000000.0,
+          "poisson_ratio": 0.283,
+          "cte_1_per_K": 1.5102e-05,
+          "yield_strength_pa": 965270000.0,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 977.59,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 158580000000.0,
+          "poisson_ratio": 0.292,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 930790000.0,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 1033.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 153750000000.0,
+          "poisson_ratio": 0.306,
+          "cte_1_per_K": 1.6038e-05,
+          "yield_strength_pa": 799790000.0,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 1088.71,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 146860000000.0,
+          "poisson_ratio": 0.321,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 689480000.0,
+          "ultimate_tensile_strength_pa": null
+        }
+      ]
+    },
+    {
+      "id": "SS316L",
+      "display_name": "316 Stainless Steel",
+      "aliases": [
+        "316L",
+        "316",
+        "316 stainless steel",
+        "316L stainless steel",
+        "1.4404",
+        "1.4401"
+      ],
+      "source_label": "BSSA physical properties plus AISI 316L elevated-temperature tensile screening data",
+      "source_url": "https://bssa.org.uk/bssa_articles/elevated-temperature-physical-properties-of-stainless-steels/",
+      "source_notes": "E/CTE values are reference data. Yield values are as-received elevated-temperature tensile screening data and are not universal allowables.",
+      "table": [
+        {
+          "T_K": 293.15,
+          "rho_kg_m3": 8000.0,
+          "cp_J_kgK": 500.0,
+          "k_W_mK": 18.9,
+          "youngs_modulus_pa": 200000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": null,
+          "ultimate_tensile_strength_pa": null
+        },
+        {
+          "T_K": 298.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": null,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 388000000.0,
+          "ultimate_tensile_strength_pa": 650000000.0
+        },
+        {
+          "T_K": 373.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 194000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.6e-05,
+          "yield_strength_pa": 265000000.0,
+          "ultimate_tensile_strength_pa": 539000000.0
+        },
+        {
+          "T_K": 473.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 186000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.65e-05,
+          "yield_strength_pa": 216000000.0,
+          "ultimate_tensile_strength_pa": 483000000.0
+        },
+        {
+          "T_K": 573.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 179000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.7e-05,
+          "yield_strength_pa": 206000000.0,
+          "ultimate_tensile_strength_pa": 470000000.0
+        },
+        {
+          "T_K": 673.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 172000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.75e-05,
+          "yield_strength_pa": 202000000.0,
+          "ultimate_tensile_strength_pa": 473000000.0
+        },
+        {
+          "T_K": 773.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": 165000000000.0,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": 1.8e-05,
+          "yield_strength_pa": 180000000.0,
+          "ultimate_tensile_strength_pa": 437000000.0
+        },
+        {
+          "T_K": 873.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": null,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 160000000.0,
+          "ultimate_tensile_strength_pa": 401000000.0
+        },
+        {
+          "T_K": 973.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": null,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 142000000.0,
+          "ultimate_tensile_strength_pa": 282000000.0
+        },
+        {
+          "T_K": 1073.15,
+          "rho_kg_m3": null,
+          "cp_J_kgK": null,
+          "k_W_mK": null,
+          "youngs_modulus_pa": null,
+          "poisson_ratio": 0.3,
+          "cte_1_per_K": null,
+          "yield_strength_pa": 125000000.0,
+          "ultimate_tensile_strength_pa": 178000000.0
+        }
+      ]
+    },
+    {
+      "id": "GRCOP42",
+      "display_name": "GRCop-42",
+      "aliases": [
+        "GRCop-42",
+        "grcop-42",
+        "GRCop42",
+        "Cu-Cr-Nb"
+      ],
+      "source_label": "Sandvik Osprey GRCop-42 PBF-L room-temperature data",
+      "source_url": "https://www.metalpowder.sandvik/en/products/metal-powder-alloys/copper-alloys/osprey-grcop-42/",
+      "source_notes": "High-temperature mechanical properties are strongly process-, heat-treatment- and geometry-dependent. This MVP keeps room-temperature screening values only.",
+      "outside_range_behavior": "clamp endpoint but add critical warning: RT-only GRCop-42 screening value used outside validated range",
+      "table": [
+        {
+          "T_K": 293.15,
+          "rho_kg_m3": 8890.0,
+          "cp_J_kgK": 385.0,
+          "k_W_mK": 287.5,
+          "youngs_modulus_pa": 78900000000.0,
+          "poisson_ratio": 0.34,
+          "cte_1_per_K": 1.75e-05,
+          "yield_strength_pa": 190300000.0,
+          "ultimate_tensile_strength_pa": 346800000.0
+        }
+      ]
+    }
+  ]
+}

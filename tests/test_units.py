@@ -39,3 +39,7 @@ def test_axis_unit_symbols_exist_for_all_presets() -> None:
     assert get_unit_symbol("pressure", UnitPreset.SI_CAD) == "bar"
     assert get_unit_symbol("pressure", UnitPreset.US) == "psia"
     assert get_unit_symbol("pressure", UnitPreset.COMMON) == "bar"
+    assert get_unit_symbol("stress", UnitPreset.SI) == "MPa"
+    assert get_unit_symbol("stress", UnitPreset.SI_CAD) == "N/mm^2"
+    assert get_unit_symbol("stress", UnitPreset.US) == "ksi"
+    assert get_unit_symbol("stress", UnitPreset.COMMON) == "MPa"

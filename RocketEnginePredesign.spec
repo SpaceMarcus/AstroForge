@@ -21,6 +21,11 @@ datas += [
     (str(Path("assets") / "astraforge_logo.png"), "assets"),
     (str(Path("assets") / "astraforge_taskbar.ico"), "assets"),
 ]
+datas += [
+    (str(data_path), "data/properties")
+    for data_path in (Path("data") / "properties").glob("*")
+    if data_path.is_file()
+]
 # Rao_Parabola_Angles reads digitized chart files directly from disk at runtime.
 # Bundle that chart-data directory explicitly so the EXE can resolve it from _MEIPASS.
 _rao_data_dir = Path(rao_parabola_angles.__file__).resolve().parent / "plot-4-16-data"

@@ -8,8 +8,10 @@ from engine.chamber_geometry import (
     ChamberGeometryInputs,
     ChamberGeometryModel,
     LStarSelectionMode,
+    apply_chamber_geometry_result_to_inputs,
     calculate_chamber_geometry,
     calculate_temporal_average_gamma,
+    chamber_geometry_result_input_updates,
     estimate_contraction_ratio_guidance,
     estimate_residence_time_metrics,
     infer_lstar_mode,
@@ -224,3 +226,45 @@ def test_temporal_average_gamma_and_residence_metrics_are_available_from_bundle(
     assert metrics.eta_v is not None
     assert metrics.eta_c is not None
     assert metrics.eta_c == pytest.approx(math.sqrt(metrics.eta_v))
+
+
+def test_chamber_geometry_result_handoff_maps_only_explicit_input_fields() -> None:
+    inputs = InputParameters(
+        fuel="RP-1",
+        oxidizer="LOX",
+        chamber_pressure_pa=7.0e6,
+        thrust_n=100_000.0,
+        mixture_ratio=2.6,
+        expansion_ratio=20.0,
+        ambient_pressure_pa=101_325.0,
+        contraction_ratio=2.8,
+        characteristic_length_m=1.0,
+        convergent_half_angle_deg=42.0,
+        chamber_corner_radius_m=0.004,
+    )
+    result = calculate_chamber_geometry(
+        ChamberGeometryInputs(
+            propellant_name="LOX / RP-1",
+            throat_diameter_m=0.1,
+            contraction_ratio=3.4,
+            convergent_half_angle_deg=35.0,
+            lstar_mode=LStarSelectionMode.CUSTOM,
+            custom_lstar_m=1.23,
+            chamber_model=ChamberGeometryModel.CYLINDRICAL,
+            corner_radius_m=0.007,
+        )
+    )
+
+    updates, notes = chamber_geometry_result_input_updates(inputs, result)
+    updated_inputs = apply_chamber_geometry_result_to_inputs(inputs, result)
+
+    assert updates["characteristic_length_m"] == pytest.approx(1.23)
+    assert updates["contraction_ratio"] == pytest.approx(3.4)
+    assert updates["convergent_half_angle_deg"] == pytest.approx(35.0)
+    assert updates["chamber_corner_radius_m"] == pytest.approx(0.007)
+    assert updated_inputs.characteristic_length_m == pytest.approx(1.23)
+    assert updated_inputs.contraction_ratio == pytest.approx(3.4)
+    assert updated_inputs.convergent_half_angle_deg == pytest.approx(35.0)
+    assert updated_inputs.chamber_corner_radius_m == pytest.approx(0.007)
+    assert any("throat_diameter_m" in note for note in notes)
+    assert any("total_chamber_length_to_throat_m" in note for note in notes)

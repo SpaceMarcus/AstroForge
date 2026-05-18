@@ -1,6 +1,15 @@
 """Tests for geometry-sandbox preview helpers."""
 
-from engine.geometry_preview import build_geometry_preview_bundle, estimate_liner_mass_kg, with_liner_mass
+from dataclasses import replace
+
+from engine.geometry_preview import (
+    build_geometry_preview_bundle,
+    estimate_liner_mass_kg,
+    format_bundle_geometry_summary,
+    is_current_design_bundle_stale,
+    validate_bundle_geometry_synchronization,
+    with_liner_mass,
+)
 from engine.models import (
     ChemistryMode,
     ExportBundle,
@@ -105,6 +114,28 @@ def test_build_geometry_preview_bundle_uses_preview_inputs() -> None:
     assert preview_bundle.contour[-1].x_m > 0.0
 
 
+def test_build_geometry_preview_bundle_uses_last_thermochemistry_gamma_for_flow_case_gate() -> None:
+    base_bundle = _make_base_bundle()
+    base_bundle.thermochemistry.gamma = 1.67
+    preview_inputs = InputParameters(
+        fuel="RP-1",
+        oxidizer="LOX",
+        chamber_pressure_pa=1.0e6,
+        thrust_n=100_000.0,
+        mixture_ratio=2.6,
+        expansion_ratio=24.0,
+        ambient_pressure_pa=5.2e5,
+        contraction_ratio=3.4,
+        characteristic_length_m=1.2,
+    )
+
+    preview_bundle = build_geometry_preview_bundle(base_bundle, preview_inputs)
+
+    assert preview_bundle.inputs.expansion_ratio == 1.0
+    assert preview_bundle.geometry.current_expansion_ratio == 1.0
+    assert preview_bundle.contour[-1].x_m == 0.0
+
+
 def test_with_liner_mass_adds_estimate_for_constant_wall() -> None:
     base_bundle = _make_base_bundle()
     preview_bundle = build_geometry_preview_bundle(base_bundle, base_bundle.inputs)
@@ -117,3 +148,38 @@ def test_with_liner_mass_adds_estimate_for_constant_wall() -> None:
 def test_estimate_liner_mass_returns_none_without_contour() -> None:
     base_bundle = _make_base_bundle()
     assert estimate_liner_mass_kg(base_bundle.inputs, []) is None
+
+
+def test_current_design_bundle_stale_detection_tracks_visible_input_changes() -> None:
+    base_bundle = _make_base_bundle()
+    committed_bundle = build_geometry_preview_bundle(base_bundle, base_bundle.inputs)
+
+    assert is_current_design_bundle_stale(base_bundle.inputs, committed_bundle) is False
+    assert (
+        is_current_design_bundle_stale(
+            replace(base_bundle.inputs, characteristic_length_m=1.25),
+            committed_bundle,
+        )
+        is True
+    )
+
+
+def test_validate_bundle_geometry_synchronization_accepts_aligned_preview_bundle() -> None:
+    base_bundle = _make_base_bundle()
+    committed_bundle = build_geometry_preview_bundle(base_bundle, base_bundle.inputs)
+
+    issues = validate_bundle_geometry_synchronization(committed_bundle)
+
+    assert issues == []
+    assert "profile aligned" in format_bundle_geometry_summary(committed_bundle)
+
+
+def test_validate_bundle_geometry_synchronization_reports_stale_profile_range() -> None:
+    base_bundle = _make_base_bundle()
+    committed_bundle = build_geometry_preview_bundle(base_bundle, base_bundle.inputs)
+    for profile_point in committed_bundle.thermochemistry_profile:
+        profile_point.x_m += 0.12
+
+    issues = validate_bundle_geometry_synchronization(committed_bundle)
+
+    assert any("x-range" in issue for issue in issues)

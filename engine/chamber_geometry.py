@@ -1,12 +1,17 @@
-"""Preliminary chamber-geometry helpers and empirical L* reference data."""
+"""Preliminary chamber-sizing helpers and empirical L* reference data.
+
+This module is intentionally limited to chamber sizing and sandbox handoff
+helpers. It does not own the authoritative nozzle contour or the committed
+Current Design bundle; those remain in the geometry preview / main solver path.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import math
 
-from engine.models import ExportBundle, ThermochemistryProfilePoint
+from engine.models import ExportBundle, InputParameters, ThermochemistryProfilePoint
 
 NASA_LSTAR_SOURCE = (
     "Source: NASA SP-125, Huzel & Huang, Design of Liquid Propellant Rocket Engines"
@@ -133,6 +138,47 @@ class ResidenceTimeEstimate:
     cstar_theoretical_m_s: float | None
     eta_v: float | None
     eta_c: float | None
+
+
+def chamber_geometry_result_input_updates(
+    inputs: InputParameters,
+    chamber_result: ChamberGeometryResult,
+) -> tuple[dict[str, object], list[str]]:
+    """Return the explicit InputParameters updates represented by a chamber result.
+
+    Only values that already have a real home in InputParameters are mapped here.
+    Derived geometry outputs such as throat diameter, chamber diameter/radius and
+    total chamber length remain GeometryResult quantities that are regenerated
+    later from the committed design inputs.
+    """
+
+    updates: dict[str, object] = {
+        "characteristic_length_m": chamber_result.selected_lstar_m,
+        "contraction_ratio": chamber_result.contraction_ratio,
+        "convergent_half_angle_deg": chamber_result.convergent_half_angle_deg,
+        "chamber_corner_radius_m": chamber_result.corner_radius_m,
+    }
+    notes = [
+        "throat_diameter_m and throat_radius_m remain derived sizing outputs; InputParameters has no direct throat-size field.",
+        "chamber_diameter_m and chamber_radius_m remain derived geometry outputs; InputParameters has no direct chamber-diameter field.",
+        "total_chamber_length_to_throat_m remains a derived geometry output; InputParameters has no direct chamber_length_m field.",
+    ]
+    return updates, notes
+
+
+def apply_chamber_geometry_result_to_inputs(
+    inputs: InputParameters,
+    chamber_result: ChamberGeometryResult,
+) -> InputParameters:
+    """Apply the explicit chamber-result handoff to InputParameters.
+
+    This keeps the chamber sandbox to Current Design transfer visible and avoids
+    silently inventing hidden state for quantities that are still derived later
+    by the main geometry-sizing pipeline.
+    """
+
+    updates, _notes = chamber_geometry_result_input_updates(inputs, chamber_result)
+    return replace(inputs, **updates)
 
 
 def list_lstar_propellants() -> list[str]:

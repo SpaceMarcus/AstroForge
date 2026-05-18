@@ -24,6 +24,7 @@ from engine.nozzle_preview import build_nozzle_preview
 from engine.unit_system import (
     UnitPreset,
     convert_from_display,
+    convert_to_display,
     format_quantity,
     get_unit_symbol,
 )
@@ -31,6 +32,8 @@ from engine.utils.validation import InputValidationError
 
 DEFAULT_LINER_MATERIAL = "CuCrZr"
 DEFAULT_COATING = "None"
+DEFAULT_CLOSEOUT_THICKNESS_M = 0.003
+CLOSEOUT_MATERIAL_OPTIONS = ["GRCop-42", "Inconel 718", "CuCrZr", "316 Stainless Steel"]
 
 SUBTYPE_LABELS = {
     BellContourVariant.PARABOLA: "Parabola (TOP)",
@@ -81,6 +84,23 @@ WALL_THICKNESS_MODE_LABELS = {
 WALL_THICKNESS_MODE_VALUES = {
     label: mode for mode, label in WALL_THICKNESS_MODE_LABELS.items()
 }
+
+
+def _route_supports_closeout(route: ManufacturingRoute) -> bool:
+    return route in {
+        ManufacturingRoute.MILLED_CHANNELS_CLOSEOUT,
+        ManufacturingRoute.ELECTROFORMED_CLOSEOUT,
+    }
+
+
+def _normalize_closeout_material(material: str | None, *, fallback: str) -> str:
+    candidate = (material or fallback or DEFAULT_LINER_MATERIAL).strip()
+    normalized = candidate.lower()
+    if normalized in {"316l stainless steel", "316l", "316"}:
+        return "316 Stainless Steel"
+    if candidate in CLOSEOUT_MATERIAL_OPTIONS:
+        return candidate
+    return fallback if fallback in CLOSEOUT_MATERIAL_OPTIONS else candidate
 
 
 class GeometryMaterialEditorPanel(ttk.LabelFrame):
@@ -944,6 +964,9 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._liner_material = tk.StringVar(value=DEFAULT_LINER_MATERIAL)
         self._coating_enabled = tk.BooleanVar(value=False)
         self._coating = tk.StringVar(value=DEFAULT_COATING)
+        self._closeout_enabled = tk.BooleanVar(value=True)
+        self._closeout_thickness = tk.StringVar(value="3.000")
+        self._closeout_material = tk.StringVar(value=DEFAULT_LINER_MATERIAL)
         self._wall_thickness_mode = tk.StringVar(
             value=WALL_THICKNESS_MODE_LABELS[WallThicknessMode.CONSTANT]
         )
@@ -951,18 +974,26 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._note_var = tk.StringVar(value="")
         self._route_box: ttk.Combobox | None = None
         self._material_box: ttk.Combobox | None = None
+        self._closeout_check: ttk.Checkbutton | None = None
+        self._closeout_material_label: ttk.Label | None = None
+        self._closeout_material_box: ttk.Combobox | None = None
+        self._closeout_thickness_entry: ttk.Entry | None = None
         self._wall_entry: ttk.Entry | None = None
         self._manufacturing_mode.trace_add("write", self._handle_mode_changed)
         self._manufacturing_route.trace_add("write", self._handle_route_changed)
         self._liner_material.trace_add("write", self._handle_changed)
         self._coating_enabled.trace_add("write", self._handle_changed)
         self._coating.trace_add("write", self._handle_changed)
+        self._closeout_enabled.trace_add("write", self._handle_closeout_changed)
+        self._closeout_thickness.trace_add("write", self._handle_changed)
+        self._closeout_material.trace_add("write", self._handle_changed)
         self._wall_thickness_mode.trace_add("write", self._handle_wall_mode_changed)
         self._wall_thickness.trace_add("write", self._handle_changed)
         self._build_widgets()
         self._sync_route_values()
         self._sync_material_values()
         self._sync_wall_mode()
+        self._sync_closeout_controls()
 
     def _build_widgets(self) -> None:
         manufacturing_frame = ttk.LabelFrame(self, text="Manufacturing", padding=10)
@@ -1017,6 +1048,30 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             values=["None", "NiCr bond coat", "Ceramic TBC", "Refractory washcoat"],
         ).grid(row=2, column=1, sticky="ew", pady=4)
 
+        ttk.Label(materials_frame, text="Closeout enabled").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
+        closeout_check = ttk.Checkbutton(materials_frame, variable=self._closeout_enabled)
+        closeout_check.grid(row=3, column=1, sticky="w", pady=4)
+        self._closeout_check = closeout_check
+
+        closeout_thickness_label = ttk.Label(materials_frame)
+        closeout_thickness_label.grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._field_labels["closeout_thickness"] = closeout_thickness_label
+        closeout_thickness_entry = ttk.Entry(materials_frame, textvariable=self._closeout_thickness)
+        closeout_thickness_entry.grid(row=4, column=1, sticky="ew", pady=4)
+        self._closeout_thickness_entry = closeout_thickness_entry
+
+        closeout_material_label = ttk.Label(materials_frame, text="Closeout material")
+        closeout_material_label.grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._closeout_material_label = closeout_material_label
+        closeout_material_box = ttk.Combobox(
+            materials_frame,
+            state="readonly",
+            textvariable=self._closeout_material,
+            values=CLOSEOUT_MATERIAL_OPTIONS,
+        )
+        closeout_material_box.grid(row=5, column=1, sticky="ew", pady=4)
+        self._closeout_material_box = closeout_material_box
+
         wall_frame = ttk.LabelFrame(self, text="Liner Wall", padding=10)
         wall_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 12), pady=(12, 0))
         wall_frame.columnconfigure(1, weight=1)
@@ -1065,6 +1120,7 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         ttk.Label(empty_tile, text="").grid(row=0, column=0, pady=42)
 
         self._apply_unit_labels()
+        self._sync_closeout_controls()
 
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         """Update displayed wall-thickness units."""
@@ -1083,10 +1139,14 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._liner_material.set(DEFAULT_LINER_MATERIAL)
         self._coating_enabled.set(False)
         self._coating.set(DEFAULT_COATING)
+        self._closeout_enabled.set(True)
+        self._closeout_thickness.set(format_quantity(DEFAULT_CLOSEOUT_THICKNESS_M, "length", self._unit_preset))
+        self._closeout_material.set(DEFAULT_LINER_MATERIAL)
         self._wall_thickness_mode.set(WALL_THICKNESS_MODE_LABELS[WallThicknessMode.CONSTANT])
         self._wall_thickness.set("1.500")
         self._suspend_notifications = False
         self._sync_wall_mode()
+        self._sync_closeout_controls()
 
     def set_inputs(self, inputs: InputParameters) -> None:
         """Populate the material/manufacturing controls from the shared input model."""
@@ -1099,6 +1159,28 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._liner_material.set(inputs.liner_material or DEFAULT_LINER_MATERIAL)
         self._coating_enabled.set(bool(inputs.liner_coating_enabled))
         self._coating.set(inputs.liner_coating or DEFAULT_COATING)
+        resolved_closeout_enabled = bool(inputs.closeout_enabled)
+        if (
+            not resolved_closeout_enabled
+            and inputs.closeout_thickness_m is None
+            and inputs.closeout_material is None
+            and _route_supports_closeout(inputs.manufacturing_route)
+        ):
+            resolved_closeout_enabled = True
+        self._closeout_enabled.set(resolved_closeout_enabled)
+        self._closeout_thickness.set(
+            format_quantity(
+                inputs.closeout_thickness_m if inputs.closeout_thickness_m is not None else DEFAULT_CLOSEOUT_THICKNESS_M,
+                "length",
+                self._unit_preset,
+            )
+        )
+        self._closeout_material.set(
+            _normalize_closeout_material(
+                inputs.closeout_material,
+                fallback=_normalize_closeout_material(inputs.liner_material, fallback=DEFAULT_LINER_MATERIAL),
+            )
+        )
         self._wall_thickness_mode.set(WALL_THICKNESS_MODE_LABELS[inputs.wall_thickness_mode])
         self._wall_thickness.set(
             ""
@@ -1107,6 +1189,7 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         )
         self._suspend_notifications = False
         self._sync_wall_mode()
+        self._sync_closeout_controls()
 
     def bind_inputs_changed(self, callback: Callable[[], None]) -> None:
         """Bind a callback fired when the draft material editor changes."""
@@ -1154,6 +1237,18 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         )
         if wall_mode is WallThicknessMode.CONSTANT and wall_thickness is None:
             errors.append("Constant wall thickness requires a numeric value.")
+        closeout_enabled = bool(self._closeout_enabled.get()) and _route_supports_closeout(route)
+        closeout_thickness = _parse_optional_float(
+            self._closeout_thickness.get(),
+            "Closeout thickness",
+            errors,
+        )
+        if closeout_enabled and closeout_thickness is None:
+            closeout_thickness = convert_to_display(DEFAULT_CLOSEOUT_THICKNESS_M, "length", self._unit_preset)
+        closeout_material = _normalize_closeout_material(
+            self._closeout_material.get(),
+            fallback=_normalize_closeout_material(self._liner_material.get(), fallback=DEFAULT_LINER_MATERIAL),
+        )
         if errors:
             raise InputValidationError(errors)
 
@@ -1164,6 +1259,13 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             "liner_material": self._liner_material.get().strip() or DEFAULT_LINER_MATERIAL,
             "liner_coating_enabled": self._coating_enabled.get() and coating != DEFAULT_COATING,
             "liner_coating": None if not self._coating_enabled.get() or coating == DEFAULT_COATING else coating,
+            "closeout_enabled": closeout_enabled,
+            "closeout_thickness_m": (
+                convert_from_display(closeout_thickness, "length", self._unit_preset)
+                if closeout_enabled
+                else None
+            ),
+            "closeout_material": closeout_material if closeout_enabled else None,
             "wall_thickness_mode": wall_mode,
             "wall_thickness_m": convert_from_display(wall_thickness, "length", self._unit_preset),
         }
@@ -1172,12 +1274,16 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._field_labels["wall_thickness"].configure(
             text=f"Wall thickness [{get_unit_symbol('length', self._unit_preset)}]"
         )
+        self._field_labels["closeout_thickness"].configure(
+            text=f"Closeout thickness [{get_unit_symbol('length', self._unit_preset)}]"
+        )
 
     def _handle_mode_changed(self, *_args: object) -> None:
         if self._suspend_notifications:
             return
         self._sync_route_values()
         self._sync_material_values()
+        self._sync_closeout_controls()
         self._update_note()
         self._handle_changed()
 
@@ -1185,6 +1291,7 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         if self._suspend_notifications:
             return
         self._sync_material_values()
+        self._sync_closeout_controls()
         self._update_note()
         self._handle_changed()
 
@@ -1192,6 +1299,12 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         if self._suspend_notifications:
             return
         self._sync_wall_mode()
+        self._handle_changed()
+
+    def _handle_closeout_changed(self, *_args: object) -> None:
+        if self._suspend_notifications:
+            return
+        self._sync_closeout_controls()
         self._handle_changed()
 
     def _sync_route_values(self) -> None:
@@ -1213,6 +1326,34 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         self._material_box.configure(values=materials)
         if self._liner_material.get() not in materials:
             self._liner_material.set(materials[0])
+
+    def _sync_closeout_controls(self) -> None:
+        route = _route_from_label(self._manufacturing_route.get()) or ManufacturingRoute.MILLED_CHANNELS_CLOSEOUT
+        route_supports_closeout = _route_supports_closeout(route)
+        if not route_supports_closeout and self._closeout_enabled.get():
+            self._suspend_notifications = True
+            self._closeout_enabled.set(False)
+            self._suspend_notifications = False
+        if self._closeout_check is not None:
+            self._closeout_check.configure(state="normal" if route_supports_closeout else "disabled")
+        if self._closeout_material_box is not None:
+            self._closeout_material_box.configure(values=CLOSEOUT_MATERIAL_OPTIONS)
+        if not self._closeout_material.get().strip():
+            self._closeout_material.set(_normalize_closeout_material(self._liner_material.get(), fallback=DEFAULT_LINER_MATERIAL))
+        show_closeout_details = route_supports_closeout and self._closeout_enabled.get()
+        closeout_thickness_label = self._field_labels.get("closeout_thickness")
+        for widget in (
+            closeout_thickness_label,
+            self._closeout_material_label,
+            self._closeout_thickness_entry,
+            self._closeout_material_box,
+        ):
+            if widget is None:
+                continue
+            if show_closeout_details:
+                widget.grid()
+            else:
+                widget.grid_remove()
 
     def _sync_wall_mode(self) -> None:
         if self._wall_entry is None:

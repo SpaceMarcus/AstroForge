@@ -24,6 +24,7 @@ dist_temp_*/
 outputs/
 versions/
 AstroForge/
+legacy/archived_unused/AstroForge_snapshot/
 
 *.spec.bak
 *.log

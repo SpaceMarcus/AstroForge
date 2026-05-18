@@ -25,6 +25,13 @@ PRESET_FORMAT = "astraforge-engine-preset"
 PRESET_VERSION = 1
 
 
+def _default_closeout_enabled_for_route(route: ManufacturingRoute) -> bool:
+    return route in {
+        ManufacturingRoute.MILLED_CHANNELS_CLOSEOUT,
+        ManufacturingRoute.ELECTROFORMED_CLOSEOUT,
+    }
+
+
 def preset_to_dict(
     inputs: InputParameters,
     *,
@@ -104,6 +111,12 @@ def load_engine_preset(target_path: str | Path) -> tuple[InputParameters, dict[s
     if not isinstance(raw_inputs, dict):
         raise ValueError("The preset does not contain a valid inputs block.")
 
+    manufacturing_route = ManufacturingRoute(
+        raw_inputs.get(
+            "manufacturing_route",
+            ManufacturingRoute.MILLED_CHANNELS_CLOSEOUT.value,
+        )
+    )
     inputs = InputParameters(
         fuel=str(raw_inputs.get("fuel", "")).strip(),
         oxidizer=str(raw_inputs.get("oxidizer", "")).strip(),
@@ -131,15 +144,13 @@ def load_engine_preset(target_path: str | Path) -> tuple[InputParameters, dict[s
         manufacturing_mode=ManufacturingMode(
             raw_inputs.get("manufacturing_mode", ManufacturingMode.TRADITIONAL.value)
         ),
-        manufacturing_route=ManufacturingRoute(
-            raw_inputs.get(
-                "manufacturing_route",
-                ManufacturingRoute.MILLED_CHANNELS_CLOSEOUT.value,
-            )
-        ),
+        manufacturing_route=manufacturing_route,
         liner_material=str(raw_inputs.get("liner_material", "CuCrZr")).strip() or "CuCrZr",
         liner_coating_enabled=bool(raw_inputs.get("liner_coating_enabled", False)),
         liner_coating=_optional_string(raw_inputs, "liner_coating"),
+        closeout_enabled=bool(raw_inputs.get("closeout_enabled", _default_closeout_enabled_for_route(manufacturing_route))),
+        closeout_thickness_m=_optional_float(raw_inputs, "closeout_thickness_m"),
+        closeout_material=_optional_string(raw_inputs, "closeout_material"),
         wall_thickness_mode=WallThicknessMode(
             raw_inputs.get("wall_thickness_mode", WallThicknessMode.CONSTANT.value)
         ),
