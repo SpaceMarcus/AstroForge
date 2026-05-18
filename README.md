@@ -6,9 +6,11 @@ regeneratively cooled LOX/RP-1 class engine with:
 
 - RocketCEA-backed thermochemistry
 - chamber / throat / nozzle geometry predesign
-- Current Design vs. Geometry sandbox separation
+- explicit Current Design workspace with draft / preview / committed separation
 - contour generation and export
 - annulus-cooling thermal-analysis MVP
+- table-based coolant and wall-material property lookup
+- preliminary thermal / mechanical screening tables
 
 The codebase keeps the main concerns separated:
 
@@ -16,6 +18,7 @@ The codebase keeps the main concerns separated:
 - `engine/chemistry/` hides RocketCEA behind a dedicated backend interface.
 - `engine/geometry/` sizes the engine and generates/exportable contours.
 - `engine/thermal_analysis.py` contains the station-wise cooling MVP solver.
+- `engine/properties/` loads editable coolant and solid-material property tables.
 - `engine/io/` handles JSON and CSV exports.
 - `engine/gui/` provides the Tkinter desktop interface and matplotlib plots.
 
@@ -134,33 +137,34 @@ The current GUI is organized into these tabs:
    - baseline starting inputs
    - first setup before committing a Current Design
 
-4. `Current Design`
-   - active design state
-   - performance preview
-   - derived flow quantities
-   - plausibility checks
-   - thermochemistry/performance run state
+4. `Current Design Workspace`
+   - primary design page
+   - editable chamber / throat / nozzle / material draft inputs
+   - explicit `Update Geometry Preview`
+   - explicit `Commit Draft & Recalculate Current Design`
+   - narrow committed / preview geometry viewer
+   - species / notes popout on contour-point selection
+   - O/F sweep popout
 
-5. `Geometry and Material`
-   - chamber section
-   - throat section
-   - nozzle section
-   - liner material section
-   - geometry contour, preview tools and geometry summary
+5. `Geometry Details`
+   - secondary committed-geometry detail view
+   - geometry summary and export-oriented context
 
 6. `Thermal Analysis`
    - annulus-cooling MVP reference model
    - read-only committed design context
+   - optional radiation screening controls
    - solver settings
+   - table-based coolant / material properties
    - pressure reconstruction for pump-fed predesign
-   - station result table
+   - station result table with thermal and preliminary mechanical screening values
    - separate plot window with export
 
 7. `Comparison`
    - reference / current comparison baseline
 
 8. `Report`
-   - prepared placeholder for structured AstraForge report output
+   - report placeholder plus property-table inspection views
 
 ## Current Design and Geometry Workflow
 
@@ -168,17 +172,19 @@ The app intentionally separates three roles:
 
 - `Initial Design`
   - editable baseline used to seed the first committed design
-- `Current Design`
-  - committed active design state
-- `Geometry and Material`
-  - sandbox/editor for chamber, throat, nozzle and liner decisions
+- `Current Design Workspace`
+  - the main working page for draft edits, preview and explicit commit/recalculate
+- `Geometry Details`
+  - secondary detail/export context for the committed geometry state
 
 Geometry changes are intentionally explicit:
 
-- sandbox edits do not silently overwrite committed Current Design values
-- selected geometry decisions can be pushed into Current Design
-- some Current Design fields become read-only once geometry has been committed
-  from the dedicated Geometry tab
+- draft edits do not silently overwrite the committed `Current Design`
+- the right-side contour viewer stays on the committed model until `Update Geometry Preview`
+- `Update Geometry Preview` creates only a temporary draft overlay
+- `Commit Draft & Recalculate Current Design` is the only step that creates a new authoritative bundle
+- `Thermal Analysis`, `Export` and report-oriented views always use the committed contour, never the uncommitted draft preview
+- some Current Design fields become read-only once geometry values have been committed from the workspace geometry path
 
 ## Chamber / Nozzle Predesign Features
 
@@ -198,19 +204,22 @@ The current thermal-analysis module is intentionally an MVP reference model.
 
 What it does:
 
-- uses the currently available contour / geometry state
+- uses the committed Current Design contour / geometry state
 - builds stations along the inner wall
 - applies an annulus-cooling reference model
 - computes station-wise coolant temperature rise, wall temperatures, heat pickup
   and cooling-side pressure drop
 - reconstructs required cooling inlet pressure and required pump discharge
   pressure for pump-fed predesign
+- supports editable table-based coolant and wall-material properties
+- includes preliminary stress / strain screening values in the station table
 
 What it currently shows:
 
 - read-only design context
 - annulus gap, roughness, flow direction and pressure assumptions
 - solver settings
+- optional radiation and participating-media screening controls
 - station result table
 - separate plot window with selectable `x` / `y` quantities
 - plot export as `CSV`, `TXT`, `PNG` and `SVG`
@@ -222,6 +231,8 @@ Important current assumptions:
 - spacer ribs are shown only as a mechanical assumption and are not included in
   the MVP calculation
 - cooling-side correlations assume fully developed annular flow
+- material and strength data are screening-level predesign data, not qualified allowables
+- preliminary mechanical screening is not FEM and not a structural qualification
 - this is acceptable for MVP predesign, but still a simplifying assumption
 
 ## Default Example Values
@@ -324,6 +335,9 @@ project_root/
     nozzle_geometry.py
     nozzle_preview.py
     chamber_geometry.py
+    properties/
+      __init__.py
+      property_tables.py
     chemistry/
       __init__.py
       base.py
@@ -335,10 +349,12 @@ project_root/
       separation.py
     gui/
       __init__.py
+      current_design_page.py
       main_window.py
       input_panel.py
       result_panel.py
       plotting.py
+      property_tables_panel.py
       project_panels.py
       chamber_geometry_panel.py
       thermal_analysis_page.py
@@ -349,10 +365,15 @@ project_root/
     utils/
       __init__.py
       validation.py
+  data/
+    properties/
+      propellant_property_tables_nist_style.json
+      solid_material_properties_screening_v1.json
   tests/
     test_app_service.py
     test_export.py
     test_nozzle_preview.py
     test_performance_preview.py
+    test_property_tables.py
     test_thermal_analysis.py
 ```
