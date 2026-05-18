@@ -79,6 +79,7 @@ class InputParameters:
     chemistry_mode: ChemistryMode = ChemistryMode.EQUILIBRIUM
     contour_method: NozzleContourMethod = NozzleContourMethod.BELL
     bell_variant: BellContourVariant = BellContourVariant.PARABOLA
+    bell_length_fraction_percent: float | None = None
     manual_nozzle_length_m: float | None = None
     throat_upstream_radius_m: float | None = None
     throat_downstream_radius_m: float | None = None

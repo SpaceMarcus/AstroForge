@@ -118,5 +118,6 @@ def adapt_inputs_for_flow_case(
     return replace(
         inputs,
         expansion_ratio=1.0,
+        bell_length_fraction_percent=None,
         manual_nozzle_length_m=None,
     )

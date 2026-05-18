@@ -104,12 +104,19 @@ def _normalize_closeout_material(material: str | None, *, fallback: str) -> str:
 
 
 class GeometryMaterialEditorPanel(ttk.LabelFrame):
-    """Structured geometry editor used by the Geometry and Material tab."""
+    """Structured nozzle editor used in sandbox and workspace modes."""
 
-    def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset = UnitPreset.SI_CAD) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        unit_preset: UnitPreset = UnitPreset.SI_CAD,
+        workflow_mode: str = "sandbox",
+    ) -> None:
         super().__init__(master, text="Nozzle Section", padding=12)
         self.columnconfigure(0, weight=1)
         self._unit_preset = unit_preset
+        self._workflow_mode = "workspace" if workflow_mode == "workspace" else "sandbox"
         self._nozzle_controls_enabled = True
         self._suspend_notifications = False
         self._change_callback: Callable[[], None] | None = None
@@ -133,15 +140,20 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         self._nozzle_widgets: list[tk.Widget] = []
         self._preview_canvas: tk.Canvas | None = None
         self._apply_divergent_loss_button: ttk.Button | None = None
+        self._preview_frame: ttk.LabelFrame | None = None
+        self._manual_override_check: ttk.Checkbutton | None = None
         self._runtime_default_expansion_ratio: float | None = None
+        self._runtime_default_length_fraction_percent: float | None = None
         self._variables = {
             "bell_subtype": tk.StringVar(value=SUBTYPE_LABELS[BellContourVariant.PARABOLA]),
             "expansion_ratio": tk.StringVar(),
             "length_fraction_percent": tk.StringVar(),
             "manual_nozzle_length": tk.StringVar(),
         }
+        self._manual_length_override = tk.BooleanVar(value=False)
         for variable in self._variables.values():
             variable.trace_add("write", self._handle_changed)
+        self._manual_length_override.trace_add("write", self._handle_manual_override_changed)
         self._build_widgets()
 
     def _build_widgets(self) -> None:
@@ -183,11 +195,21 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         length_fraction_entry.grid(row=3, column=1, sticky="ew", pady=4)
         self._nozzle_widgets.append(length_fraction_entry)
 
+        manual_override_check = ttk.Checkbutton(
+            nozzle_frame,
+            text="Enable manual nozzle length override",
+            variable=self._manual_length_override,
+        )
+        manual_override_check.grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._manual_override_check = manual_override_check
+        self._nozzle_widgets.append(manual_override_check)
+
         self._field_labels["manual_nozzle_length"] = ttk.Label(nozzle_frame)
-        self._field_labels["manual_nozzle_length"].grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._field_labels["manual_nozzle_length"].grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
         manual_entry = ttk.Entry(nozzle_frame, textvariable=self._variables["manual_nozzle_length"])
-        manual_entry.grid(row=4, column=1, sticky="ew", pady=4)
+        manual_entry.grid(row=5, column=1, sticky="ew", pady=4)
         self._nozzle_widgets.append(manual_entry)
+        self._manual_length_entry = manual_entry
 
         ttk.Label(
             nozzle_frame,
@@ -197,7 +219,7 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             ),
             wraplength=440,
             justify="left",
-        ).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
         inflow_frame = ttk.LabelFrame(self, text="Bell start angle θ_n", padding=10)
         inflow_frame.grid(row=0, column=1, sticky="nsew")
@@ -231,6 +253,15 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             width=20,
         )
         self._apply_divergent_loss_button.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        if self._workflow_mode == "workspace":
+            ttk.Label(
+                calculation_frame,
+                text="Committed automatically on the global Current Design commit.",
+                wraplength=320,
+                justify="left",
+                foreground="#53606d",
+            ).grid(row=2, column=0, sticky="ew", pady=(10, 0))
+            self._apply_divergent_loss_button.grid_remove()
 
         outflow_frame = ttk.LabelFrame(self, text="Exit angle θ_e", padding=10)
         outflow_frame.grid(row=1, column=1, sticky="nsew", pady=(12, 0))
@@ -245,10 +276,13 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         preview_frame = ttk.LabelFrame(self, text="Nozzle Preview", padding=10)
         preview_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         preview_frame.columnconfigure(0, weight=1)
+        self._preview_frame = preview_frame
         preview_canvas = tk.Canvas(preview_frame, height=150, background="#f7f8fb", highlightthickness=0)
         preview_canvas.grid(row=0, column=0, sticky="ew")
         preview_canvas.bind("<Configure>", self._handle_preview_resize)
         self._preview_canvas = preview_canvas
+        if self._workflow_mode == "workspace":
+            preview_frame.grid_remove()
 
         ttk.Label(
             self,
@@ -258,6 +292,7 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             foreground="#7d4d1b",
         ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self._apply_unit_labels()
+        self._sync_manual_length_controls()
         self._sync_bell_subtype_visibility()
         self._refresh_tile_text()
         self._refresh_preview()
@@ -290,15 +325,28 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             default_expansion_ratio = inputs.expansion_ratio
         self._runtime_default_expansion_ratio = default_expansion_ratio
         self._variables["expansion_ratio"].set(f"{default_expansion_ratio:.4f}")
+        length_fraction_percent = (
+            current_bundle.geometry.top_nozzle_length_fraction_percent
+            if current_bundle is not None and current_bundle.geometry.top_nozzle_length_fraction_percent is not None
+            else inputs.bell_length_fraction_percent
+        )
+        if length_fraction_percent is None and self._current_is_bell:
+            length_fraction_percent = 80.0
+        self._runtime_default_length_fraction_percent = length_fraction_percent
         self._variables["length_fraction_percent"].set(
             ""
-            if current_bundle is None or current_bundle.geometry.top_nozzle_length_fraction_percent is None
-            else f"{current_bundle.geometry.top_nozzle_length_fraction_percent:.1f}"
+            if length_fraction_percent is None
+            else f"{length_fraction_percent:.1f}"
         )
+        manual_override = inputs.manual_nozzle_length_m is not None and inputs.manual_nozzle_length_m > 0.0
+        self._manual_length_override.set(manual_override)
         self._variables["manual_nozzle_length"].set(
-            "" if inputs.manual_nozzle_length_m is None else format_quantity(inputs.manual_nozzle_length_m, "length", self._unit_preset)
+            ""
+            if not manual_override or inputs.manual_nozzle_length_m is None
+            else format_quantity(inputs.manual_nozzle_length_m, "length", self._unit_preset)
         )
         self._suspend_notifications = False
+        self._sync_manual_length_controls()
         self._sync_bell_subtype_visibility()
         self._refresh_tile_text()
         self._refresh_preview()
@@ -335,6 +383,37 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
                 self._suspend_notifications = True
                 self._runtime_default_expansion_ratio = runtime_default_expansion_ratio
                 self._variables["expansion_ratio"].set(f"{runtime_default_expansion_ratio:.4f}")
+                self._suspend_notifications = False
+            runtime_length_fraction_percent = (
+                current_bundle.geometry.top_nozzle_length_fraction_percent
+                if current_bundle is not None and current_bundle.geometry.top_nozzle_length_fraction_percent is not None
+                else inputs.bell_length_fraction_percent
+            )
+            if runtime_length_fraction_percent is None and self._current_is_bell:
+                runtime_length_fraction_percent = 80.0
+            try:
+                current_length_fraction_percent = float(
+                    self._variables["length_fraction_percent"].get().strip().replace(",", ".")
+                )
+            except ValueError:
+                current_length_fraction_percent = None
+            if (
+                not self._manual_length_override.get()
+                and runtime_length_fraction_percent is not None
+                and (
+                    current_length_fraction_percent is None
+                    or self._runtime_default_length_fraction_percent is None
+                    or math.isclose(
+                        current_length_fraction_percent,
+                        self._runtime_default_length_fraction_percent,
+                        rel_tol=1.0e-9,
+                        abs_tol=1.0e-6,
+                    )
+                )
+            ):
+                self._suspend_notifications = True
+                self._runtime_default_length_fraction_percent = runtime_length_fraction_percent
+                self._variables["length_fraction_percent"].set(f"{runtime_length_fraction_percent:.1f}")
                 self._suspend_notifications = False
         self._refresh_tile_text()
         self._refresh_preview()
@@ -406,27 +485,28 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             "Bell length Lf",
             errors,
         )
-        manual_nozzle_length = _parse_optional_float(
-            self._variables["manual_nozzle_length"].get(),
-            "Manual nozzle length",
-            errors,
-        )
+        manual_nozzle_length = None
+        if self._manual_length_override.get():
+            manual_nozzle_length = _parse_required_float(
+                self._variables["manual_nozzle_length"].get(),
+                "Manual nozzle length",
+                errors,
+            )
 
         if errors:
             raise InputValidationError(errors)
 
         resolved_manual_length_m = convert_from_display(manual_nozzle_length, "length", self._unit_preset)
-        if resolved_manual_length_m is None and length_fraction_percent is not None:
-            preview = self._build_preview_model()
-            if preview is None:
-                raise InputValidationError(
-                    ["Bell-length fraction could not be resolved into a nozzle length for the current preview."]
-                )
-            resolved_manual_length_m = preview.length_m
+        resolved_length_fraction_percent = None
+        if self._current_is_bell and not self._manual_length_override.get():
+            resolved_length_fraction_percent = length_fraction_percent
+            if resolved_length_fraction_percent is None:
+                resolved_length_fraction_percent = self._runtime_default_length_fraction_percent or 80.0
 
         return {
             "bell_variant": bell_variant,
             "expansion_ratio": expansion_ratio,
+            "bell_length_fraction_percent": resolved_length_fraction_percent,
             "manual_nozzle_length_m": resolved_manual_length_m,
         }
 
@@ -441,10 +521,13 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         for widget in self._nozzle_widgets:
             if isinstance(widget, ttk.Combobox):
                 widget.configure(state=state)
+            elif isinstance(widget, ttk.Checkbutton):
+                widget.configure(state="normal" if enabled else "disabled")
             else:
                 widget.configure(state="normal" if enabled else "disabled")
         if self._apply_divergent_loss_button is not None and not enabled:
             self._apply_divergent_loss_button.configure(state="disabled")
+        self._sync_manual_length_controls()
         self._sync_bell_subtype_visibility()
 
     def _sync_bell_subtype_visibility(self, *_args: object) -> None:
@@ -463,6 +546,18 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         self._refresh_preview()
         if self._change_callback is not None:
             self._change_callback()
+
+    def _handle_manual_override_changed(self, *_args: object) -> None:
+        if self._suspend_notifications:
+            return
+        self._sync_manual_length_controls()
+        self._handle_changed()
+
+    def _sync_manual_length_controls(self) -> None:
+        if getattr(self, "_manual_length_entry", None) is None:
+            return
+        manual_enabled = self._manual_length_override.get() and self._nozzle_controls_enabled
+        self._manual_length_entry.configure(state="normal" if manual_enabled else "disabled")
 
     def _refresh_tile_text(self) -> None:
         preview = self._build_preview_model()
@@ -638,14 +733,17 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         if not math.isfinite(expansion_ratio) or expansion_ratio <= 1.0:
             return None
 
-        try:
-            manual_length = float(self._variables["manual_nozzle_length"].get().strip().replace(",", "."))
-        except ValueError:
+        if self._manual_length_override.get():
+            try:
+                manual_length = float(self._variables["manual_nozzle_length"].get().strip().replace(",", "."))
+            except ValueError:
+                manual_length = None
+        else:
             manual_length = None
         try:
             length_fraction_percent = float(self._variables["length_fraction_percent"].get().strip().replace(",", "."))
         except ValueError:
-            length_fraction_percent = None
+            length_fraction_percent = self._runtime_default_length_fraction_percent
 
         runtime_inputs = self._runtime_inputs
         runtime_bundle = self._runtime_bundle
@@ -949,7 +1047,7 @@ class MaterialOptionsPanel(ttk.LabelFrame):
     """Material and manufacturing editor prepared for future process-specific rules."""
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset = UnitPreset.SI_CAD) -> None:
-        super().__init__(master, text="Material Section", padding=12)
+        super().__init__(master, text="Material & Thickness", padding=12)
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
         self._change_callback: Callable[[], None] | None = None
@@ -1024,7 +1122,7 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             justify="left",
         ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
-        materials_frame = ttk.LabelFrame(self, text="Materials", padding=10)
+        materials_frame = ttk.LabelFrame(self, text="Material & Thickness", padding=10)
         materials_frame.grid(row=0, column=1, sticky="nsew")
         materials_frame.columnconfigure(1, weight=1)
 
@@ -1072,36 +1170,36 @@ class MaterialOptionsPanel(ttk.LabelFrame):
         closeout_material_box.grid(row=5, column=1, sticky="ew", pady=4)
         self._closeout_material_box = closeout_material_box
 
-        wall_frame = ttk.LabelFrame(self, text="Liner Wall", padding=10)
-        wall_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 12), pady=(12, 0))
-        wall_frame.columnconfigure(1, weight=1)
+        ttk.Separator(materials_frame, orient="horizontal").grid(
+            row=6, column=0, columnspan=2, sticky="ew", pady=(10, 8)
+        )
 
-        ttk.Label(wall_frame, text="Wall model").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(materials_frame, text="Wall model").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Combobox(
-            wall_frame,
+            materials_frame,
             state="readonly",
             textvariable=self._wall_thickness_mode,
             values=list(WALL_THICKNESS_MODE_VALUES),
-        ).grid(row=0, column=1, sticky="ew", pady=4)
+        ).grid(row=7, column=1, sticky="ew", pady=4)
 
-        wall_label = ttk.Label(wall_frame)
-        wall_label.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
+        wall_label = ttk.Label(materials_frame)
+        wall_label.grid(row=8, column=0, sticky="w", padx=(0, 10), pady=4)
         self._field_labels["wall_thickness"] = wall_label
-        wall_entry = ttk.Entry(wall_frame, textvariable=self._wall_thickness)
-        wall_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        wall_entry = ttk.Entry(materials_frame, textvariable=self._wall_thickness)
+        wall_entry.grid(row=8, column=1, sticky="ew", pady=4)
         self._wall_entry = wall_entry
 
         ttk.Label(
-            wall_frame,
+            materials_frame,
             text=(
                 "The wall thickness here refers specifically to the hot-gas-to-coolant separating wall. "
                 "Variable wall thickness is structurally prepared but not yet solved in detail."
             ),
             wraplength=420,
             justify="left",
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        button_row = ttk.Frame(wall_frame)
-        button_row.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ).grid(row=9, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        button_row = ttk.Frame(materials_frame)
+        button_row.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
         ttk.Button(
             button_row,
             text="Apply Wall Thickness",
@@ -1114,10 +1212,6 @@ class MaterialOptionsPanel(ttk.LabelFrame):
             command=self._commit_liner_updates,
             width=34,
         ).grid(row=0, column=1, sticky="w", padx=(10, 0))
-
-        empty_tile = ttk.LabelFrame(self, text="", padding=10)
-        empty_tile.grid(row=1, column=1, sticky="nsew", pady=(12, 0))
-        ttk.Label(empty_tile, text="").grid(row=0, column=0, pady=42)
 
         self._apply_unit_labels()
         self._sync_closeout_controls()

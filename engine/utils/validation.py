@@ -86,6 +86,11 @@ def validate_input_parameters(inputs: InputParameters) -> list[str]:
 
     if inputs.manual_nozzle_length_m is not None and not _is_finite_positive(inputs.manual_nozzle_length_m):
         errors.append("Manual nozzle length L must be greater than 0 m when it is provided.")
+    if inputs.bell_length_fraction_percent is not None:
+        if not math.isfinite(inputs.bell_length_fraction_percent):
+            errors.append("Bell length fraction Lf must be finite when it is provided.")
+        elif not (60.0 <= inputs.bell_length_fraction_percent <= 100.0):
+            errors.append("Bell length fraction Lf must stay between 60 and 100 percent when it is provided.")
 
     if not math.isfinite(inputs.convergent_half_angle_deg) or not (1.0 <= inputs.convergent_half_angle_deg < 90.0):
         errors.append("Convergent half-angle must stay between 1 and 90 deg.")

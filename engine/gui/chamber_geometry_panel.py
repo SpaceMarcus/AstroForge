@@ -50,7 +50,12 @@ DEFAULT_THROAT_DOWNSTREAM_RATIO = 0.382
 
 
 class ChamberGeometryPanel(ttk.LabelFrame):
-    """Interactive chamber sandbox with staged L* and epsilon_c selection."""
+    """Interactive chamber workspace for chamber/throat draft sizing.
+
+    ``sandbox`` keeps the earlier staged educational workflow with local Apply
+    steps. ``workspace`` exposes the same values as live draft inputs that are
+    committed only by the main Current Design action.
+    """
 
     _NOTE_TEXT = (
         "L* is an empirical preliminary design parameter. It represents the chamber volume required "
@@ -63,9 +68,11 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         "based on the required chamber volume on a log scale."
     )
 
-    def __init__(self, master: tk.Misc) -> None:
+    def __init__(self, master: tk.Misc, *, workflow_mode: str = "sandbox") -> None:
         super().__init__(master, text="Chamber and Throat Workspace", padding=12)
         self.columnconfigure(0, weight=1)
+        normalized_mode = workflow_mode.strip().lower()
+        self._workflow_mode = normalized_mode if normalized_mode in {"sandbox", "workspace"} else "sandbox"
 
         self._suspend_notifications = False
         self._apply_lstar_callback: Callable[[], None] | None = None
@@ -115,6 +122,12 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._shape_note_var = tk.StringVar(
             value="Near-spherical and spherical chamber concepts remain visible here as future work while the current predesign flow focuses on the cylindrical chamber."
         )
+        self._workspace_mode_note_var = tk.StringVar(
+            value=(
+                "Live chamber and throat draft values are committed only by the global "
+                "Commit Draft & Recalculate Current Design action."
+            )
+        )
         self._current_propellant_var = tk.StringVar(value=DEFAULT_LSTAR_PROPELLANT)
         self._lstar_range_text_var = tk.StringVar(value="--")
         self._lstar_selection_text_var = tk.StringVar(value="selected: --")
@@ -161,6 +174,8 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._eps_tile_widgets: list[tk.Widget] = []
         self._preview_canvas: tk.Canvas | None = None
         self._throat_preview_canvas: tk.Canvas | None = None
+        self._preview_frame: ttk.LabelFrame | None = None
+        self._throat_preview_frame: ttk.LabelFrame | None = None
 
         self._build_widgets()
         self._refresh_results()
@@ -230,15 +245,24 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             justify="left",
         ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
-        apply_frame = ttk.Frame(input_frame)
-        apply_frame.grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        self._apply_geometry_button = ttk.Button(
-            apply_frame,
-            text="Apply Chamber Geometry",
-            command=self._apply_geometry_inputs,
-            width=22,
-        )
-        self._apply_geometry_button.grid(row=0, column=0, sticky="w")
+        if self._workflow_mode == "workspace":
+            ttk.Label(
+                input_frame,
+                textvariable=self._workspace_mode_note_var,
+                wraplength=500,
+                justify="left",
+                foreground="#53606d",
+            ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        else:
+            apply_frame = ttk.Frame(input_frame)
+            apply_frame.grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+            self._apply_geometry_button = ttk.Button(
+                apply_frame,
+                text="Apply Chamber Geometry",
+                command=self._apply_geometry_inputs,
+                width=22,
+            )
+            self._apply_geometry_button.grid(row=0, column=0, sticky="w")
 
         result_frame = ttk.LabelFrame(left_frame, text="Chamber Geometry Calculation", padding=10)
         result_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
@@ -312,6 +336,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         preview_frame = ttk.LabelFrame(left_frame, text="Chamber Geometry Preview", padding=10)
         preview_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         preview_frame.columnconfigure(0, weight=1)
+        self._preview_frame = preview_frame
         preview_canvas = tk.Canvas(preview_frame, height=220, background="#f7f8fb", highlightthickness=0)
         preview_canvas.grid(row=0, column=0, sticky="ew")
         preview_canvas.bind("<Configure>", self._handle_preview_resize)
@@ -385,16 +410,25 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         lstar_text.bind("<FocusOut>", self._handle_text_changed)
         self._justification_text_widgets["lstar"] = lstar_text
 
-        apply_lstar_row = ttk.Frame(lstar_frame)
-        apply_lstar_row.grid(row=9, column=0, sticky="w", pady=(8, 0))
-        apply_lstar_button = ttk.Button(
-            apply_lstar_row,
-            text="Apply L* Selection",
-            command=self._apply_lstar_selection,
-            width=18,
-        )
-        apply_lstar_button.grid(row=0, column=0, sticky="w")
-        self._apply_lstar_button = apply_lstar_button
+        if self._workflow_mode == "workspace":
+            ttk.Label(
+                lstar_frame,
+                text="Live draft value. The global Current Design commit will use this L* directly.",
+                wraplength=420,
+                justify="left",
+                foreground="#53606d",
+            ).grid(row=9, column=0, sticky="ew", pady=(8, 0))
+        else:
+            apply_lstar_row = ttk.Frame(lstar_frame)
+            apply_lstar_row.grid(row=9, column=0, sticky="w", pady=(8, 0))
+            apply_lstar_button = ttk.Button(
+                apply_lstar_row,
+                text="Apply L* Selection",
+                command=self._apply_lstar_selection,
+                width=18,
+            )
+            apply_lstar_button.grid(row=0, column=0, sticky="w")
+            self._apply_lstar_button = apply_lstar_button
 
         ttk.Label(
             lstar_frame,
@@ -484,17 +518,26 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._justification_text_widgets["contraction_ratio"] = eps_text
         self._eps_tile_widgets.append(eps_text)
 
-        apply_eps_row = ttk.Frame(eps_frame)
-        apply_eps_row.grid(row=10, column=0, sticky="w", pady=(8, 0))
-        apply_eps_button = ttk.Button(
-            apply_eps_row,
-            text="Apply epsilon_c",
-            command=self._apply_eps_selection,
-            width=18,
-        )
-        apply_eps_button.grid(row=0, column=0, sticky="w")
-        self._apply_eps_button = apply_eps_button
-        self._eps_tile_widgets.append(apply_eps_button)
+        if self._workflow_mode == "workspace":
+            ttk.Label(
+                eps_frame,
+                text="Live draft value. The global Current Design commit will use this contraction ratio directly.",
+                wraplength=420,
+                justify="left",
+                foreground="#53606d",
+            ).grid(row=10, column=0, sticky="ew", pady=(8, 0))
+        else:
+            apply_eps_row = ttk.Frame(eps_frame)
+            apply_eps_row.grid(row=10, column=0, sticky="w", pady=(8, 0))
+            apply_eps_button = ttk.Button(
+                apply_eps_row,
+                text="Apply epsilon_c",
+                command=self._apply_eps_selection,
+                width=18,
+            )
+            apply_eps_button.grid(row=0, column=0, sticky="w")
+            self._apply_eps_button = apply_eps_button
+            self._eps_tile_widgets.append(apply_eps_button)
 
         ttk.Label(
             eps_frame,
@@ -548,20 +591,30 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             textvariable=self._throat_selection_text_var,
             justify="left",
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        apply_throat_row = ttk.Frame(throat_frame)
-        apply_throat_row.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        apply_throat_button = ttk.Button(
-            apply_throat_row,
-            text="Apply Throat Radii",
-            command=self._apply_throat_selection,
-            width=18,
-        )
-        apply_throat_button.grid(row=0, column=0, sticky="w")
-        self._apply_throat_button = apply_throat_button
+        if self._workflow_mode == "workspace":
+            ttk.Label(
+                throat_frame,
+                text="Live draft value. The global Current Design commit will use the current throat blend directly.",
+                wraplength=420,
+                justify="left",
+                foreground="#53606d",
+            ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        else:
+            apply_throat_row = ttk.Frame(throat_frame)
+            apply_throat_row.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            apply_throat_button = ttk.Button(
+                apply_throat_row,
+                text="Apply Throat Radii",
+                command=self._apply_throat_selection,
+                width=18,
+            )
+            apply_throat_button.grid(row=0, column=0, sticky="w")
+            self._apply_throat_button = apply_throat_button
 
         throat_preview_frame = ttk.LabelFrame(throat_section_frame, text="Throat Geometry Closeup", padding=10)
         throat_preview_frame.grid(row=0, column=1, sticky="nsew")
         throat_preview_frame.columnconfigure(0, weight=1)
+        self._throat_preview_frame = throat_preview_frame
         throat_preview_canvas = tk.Canvas(
             throat_preview_frame,
             height=220,
@@ -571,6 +624,9 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         throat_preview_canvas.grid(row=0, column=0, sticky="ew")
         throat_preview_canvas.bind("<Configure>", self._handle_throat_preview_resize)
         self._throat_preview_canvas = throat_preview_canvas
+        if self._workflow_mode == "workspace":
+            preview_frame.grid_remove()
+            throat_preview_frame.grid_remove()
 
     def bind_apply_selected_lstar(self, callback: Callable[[], None]) -> None:
         """Bind a callback after L* is stored for explicit Current Design transfer."""
@@ -613,7 +669,11 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._stored_geometry_update = None
         self._stored_calc_var.set("Last Geometry Calculation: not stored yet.")
         self._warnings_var.set("")
-        self._status_var.set("Apply L* and epsilon_c selections, then store the chamber geometry calculation.")
+        self._status_var.set(
+            "Apply L* and epsilon_c selections, then store the chamber geometry calculation."
+            if self._workflow_mode != "workspace"
+            else "Live chamber/throat draft is ready. Commit it through Current Design when you want to refresh the authoritative contour."
+        )
 
         propellant_name = self._current_propellant_name(inputs)
         throat_diameter_m = self._current_throat_diameter_m(current_bundle)
@@ -664,7 +724,16 @@ class ChamberGeometryPanel(ttk.LabelFrame):
 
         self._suspend_notifications = True
         self._variables["convergent_half_angle_deg"].set(f"{inputs.convergent_half_angle_deg:.3f}")
-        self._variables["corner_radius_ratio"].set("0.0000")
+        if (
+            throat_radius_m is not None
+            and throat_radius_m > 0.0
+            and inputs.chamber_corner_radius_m is not None
+            and inputs.chamber_corner_radius_m >= 0.0
+        ):
+            corner_radius_ratio = inputs.chamber_corner_radius_m / throat_radius_m
+        else:
+            corner_radius_ratio = 0.0
+        self._variables["corner_radius_ratio"].set(f"{corner_radius_ratio:.4f}")
         self._variables["throat_upstream_ratio"].set(f"{upstream_ratio:.4f}")
         self._variables["throat_downstream_ratio"].set(f"{downstream_ratio:.4f}")
         self._variables["lstar_mode"].set(SELECTION_MODE_LABELS[lstar_mode])
@@ -675,16 +744,30 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             widget.delete("1.0", "end")
         self._suspend_notifications = False
 
-        self._committed_lstar_m = None
-        self._committed_lstar_mode = None
-        self._committed_lstar_justification = ""
-        self._committed_eps_c = None
-        self._committed_eps_mode = None
-        self._committed_eps_justification = ""
-        self._committed_throat_upstream_ratio = None
-        self._committed_throat_downstream_ratio = None
-        self._variables["selected_lstar_m"].set("not yet applied")
-        self._variables["selected_epsilon_c"].set("not yet applied")
+        if self._workflow_mode == "workspace":
+            self._committed_lstar_m = lstar_value
+            self._committed_lstar_mode = lstar_mode
+            self._committed_lstar_justification = ""
+            self._committed_eps_c = eps_value
+            self._committed_eps_mode = eps_mode if eps_value is not None else None
+            self._committed_eps_justification = ""
+            self._committed_throat_upstream_ratio = upstream_ratio
+            self._committed_throat_downstream_ratio = downstream_ratio
+            self._variables["selected_lstar_m"].set(f"{lstar_value:.4f}")
+            self._variables["selected_epsilon_c"].set(
+                "not yet applied" if eps_value is None else f"{eps_value:.4f}"
+            )
+        else:
+            self._committed_lstar_m = None
+            self._committed_lstar_mode = None
+            self._committed_lstar_justification = ""
+            self._committed_eps_c = None
+            self._committed_eps_mode = None
+            self._committed_eps_justification = ""
+            self._committed_throat_upstream_ratio = None
+            self._committed_throat_downstream_ratio = None
+            self._variables["selected_lstar_m"].set("not yet applied")
+            self._variables["selected_epsilon_c"].set("not yet applied")
         self._refresh_results()
 
     def set_runtime_context(
@@ -772,6 +855,63 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             if corner_radius_ratio is not None and corner_radius_ratio >= 0.0:
                 preview_updates["chamber_corner_radius_m"] = corner_radius_ratio * throat_radius_m
         return preview_updates
+
+    def get_live_commit_updates(self) -> dict[str, object]:
+        """Return strict chamber/throat draft values for Current Design commits."""
+
+        throat_diameter_m = self._current_throat_diameter_m()
+        errors: list[str] = []
+        if throat_diameter_m is None or throat_diameter_m <= 0.0:
+            raise InputValidationError(
+                ["Current throat sizing is unavailable. Calculate the baseline Current Design first."]
+            )
+
+        throat_radius_m = 0.5 * throat_diameter_m
+        propellant_name = self._current_propellant_name()
+        selected_lstar_m = self._resolve_live_lstar(propellant_name)
+        if selected_lstar_m is None:
+            errors.append("L* selection is invalid.")
+
+        guidance = self._current_eps_guidance(lstar_value=selected_lstar_m)
+        selected_eps = None
+        if guidance is not None:
+            selected_eps = self._resolve_live_epsilon(
+                guidance.contraction_ratio_min,
+                guidance.contraction_ratio_max,
+            )
+        if selected_eps is None:
+            errors.append("epsilon_c selection is invalid or unavailable.")
+
+        convergent_half_angle_deg = _parse_required_float(
+            self._variables["convergent_half_angle_deg"].get(),
+            "Convergent half angle theta",
+            errors,
+        )
+        corner_radius_ratio = _parse_required_float(
+            self._variables["corner_radius_ratio"].get(),
+            "r_corner / r_t",
+            errors,
+        )
+        if corner_radius_ratio < 0.0:
+            errors.append("r_corner / r_t must be zero or positive.")
+
+        upstream_ratio, downstream_ratio = self._resolve_live_throat_ratios()
+        if upstream_ratio is None or upstream_ratio <= 0.0:
+            errors.append("Upstream throat radius ratio is invalid.")
+        if downstream_ratio is None or downstream_ratio <= 0.0:
+            errors.append("Downstream throat radius ratio is invalid.")
+
+        if errors:
+            raise InputValidationError(errors)
+
+        return {
+            "characteristic_length_m": selected_lstar_m,
+            "contraction_ratio": selected_eps,
+            "convergent_half_angle_deg": convergent_half_angle_deg,
+            "chamber_corner_radius_m": corner_radius_ratio * throat_radius_m,
+            "throat_upstream_radius_m": upstream_ratio * throat_radius_m,
+            "throat_downstream_radius_m": downstream_ratio * throat_radius_m,
+        }
 
     def has_stored_geometry_updates(self) -> bool:
         return self._stored_geometry_update is not None
@@ -963,10 +1103,34 @@ class ChamberGeometryPanel(ttk.LabelFrame):
             errors,
         )
 
-        if self._committed_lstar_m is None:
-            errors.append("Apply the L* Selection tile first.")
-        if self._committed_eps_c is None:
-            errors.append("Apply the epsilon_c tile first.")
+        active_lstar_m = (
+            self._resolve_live_lstar(self._current_propellant_name())
+            if self._workflow_mode == "workspace"
+            else self._committed_lstar_m
+        )
+        active_eps_c: float | None
+        if self._workflow_mode == "workspace":
+            guidance = self._current_eps_guidance(lstar_value=active_lstar_m)
+            active_eps_c = (
+                None
+                if guidance is None
+                else self._resolve_live_epsilon(
+                    guidance.contraction_ratio_min,
+                    guidance.contraction_ratio_max,
+                )
+            )
+        else:
+            active_eps_c = self._committed_eps_c
+        if active_lstar_m is None:
+            errors.append(
+                "L* draft is invalid." if self._workflow_mode == "workspace" else "Apply the L* Selection tile first."
+            )
+        if active_eps_c is None:
+            errors.append(
+                "epsilon_c draft is invalid or unavailable."
+                if self._workflow_mode == "workspace"
+                else "Apply the epsilon_c tile first."
+            )
         throat_diameter_m = self._current_throat_diameter_m()
         if throat_diameter_m is None:
             errors.append(
@@ -979,17 +1143,17 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         inputs = ChamberGeometryInputs(
             propellant_name=self._current_propellant_name(),
             throat_diameter_m=throat_diameter_m,
-            contraction_ratio=self._committed_eps_c or 0.0,
+            contraction_ratio=active_eps_c or 0.0,
             convergent_half_angle_deg=convergent_half_angle_deg,
             lstar_mode=LStarSelectionMode.CUSTOM,
-            custom_lstar_m=self._committed_lstar_m,
+            custom_lstar_m=active_lstar_m,
             chamber_model=chamber_model,
             corner_radius_m=corner_radius_ratio * throat_radius_m,
         )
         state = WorkingChamberGeometryState(
             inputs=inputs,
-            lstar_justification=self._committed_lstar_justification,
-            contraction_ratio_justification=self._committed_eps_justification,
+            lstar_justification=self._committed_lstar_justification if self._workflow_mode != "workspace" else "",
+            contraction_ratio_justification=self._committed_eps_justification if self._workflow_mode != "workspace" else "",
         )
         result = calculate_chamber_geometry(inputs)
         return state, result
@@ -1002,6 +1166,11 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._refresh_throat_tile()
         self._sync_custom_states()
         self._update_button_states()
+        if self._workflow_mode == "workspace":
+            live_lstar_m = self._resolve_live_lstar(propellant_name)
+            self._variables["selected_lstar_m"].set(
+                "not yet applied" if live_lstar_m is None else f"{live_lstar_m:.4f}"
+            )
 
         try:
             _state, result = self._build_live_working_state()
@@ -1029,6 +1198,8 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         self._result_vars["throat_diameter"].set(f"{result.throat_diameter_m:.5f}")
         self._result_vars["chamber_diameter"].set(f"{result.chamber_diameter_m:.5f}")
         self._result_vars["contraction_ratio"].set(f"{result.contraction_ratio:.4f}")
+        if self._workflow_mode == "workspace":
+            self._variables["selected_epsilon_c"].set(f"{result.contraction_ratio:.4f}")
         self._result_vars["convergent_half_angle"].set(f"{result.convergent_half_angle_deg:.3f}")
         self._result_vars["corner_radius_ratio"].set(
             f"{result.corner_radius_m / max(0.5 * result.throat_diameter_m, 1.0e-9):.4f}"
@@ -1045,6 +1216,8 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._stored_calculation is None:
             self._status_var.set(
                 "Selections are visible in Chamber Geometry Inputs. Use Apply Chamber Geometry to store the chamber calculation."
+                if self._workflow_mode != "workspace"
+                else "Selections are visible in the live draft preview. Use Commit Draft & Recalculate Current Design to refresh the committed contour."
             )
         self._draw_liner_preview(result)
         self._refresh_throat_preview()
@@ -1069,7 +1242,11 @@ class ChamberGeometryPanel(ttk.LabelFrame):
     def _refresh_eps_tile(self) -> None:
         guidance = self._current_eps_guidance()
         if guidance is None:
-            if self._committed_lstar_m is None:
+            if self._workflow_mode == "workspace":
+                self._eps_hint_var.set(
+                    "Use the current live L* draft and committed throat sizing to unlock epsilon_c guidance."
+                )
+            elif self._committed_lstar_m is None:
                 self._eps_hint_var.set("Apply L* Selection first to unlock epsilon_c guidance.")
             elif self._current_throat_diameter_m() is None:
                 self._eps_hint_var.set(
@@ -1134,7 +1311,7 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._custom_eps_entry is not None:
             eps_mode = SELECTION_MODE_VALUES.get(self._variables["eps_mode"].get(), LStarSelectionMode.NOMINAL)
             self._custom_eps_entry.configure(
-                state="normal" if eps_mode is LStarSelectionMode.CUSTOM and self._committed_lstar_m is not None else "disabled"
+                state="normal" if eps_mode is LStarSelectionMode.CUSTOM and self._current_eps_guidance() is not None else "disabled"
             )
 
     def _update_button_states(self) -> None:
@@ -1177,15 +1354,22 @@ class ChamberGeometryPanel(ttk.LabelFrame):
         if self._apply_geometry_button is not None:
             self._apply_geometry_button.configure(state="normal" if geometry_ready else "disabled")
 
-    def _current_eps_guidance(self) -> object | None:
-        if self._committed_lstar_m is None:
+    def _current_eps_guidance(self, *, lstar_value: float | None = None) -> object | None:
+        active_lstar_m = lstar_value
+        if active_lstar_m is None:
+            active_lstar_m = (
+                self._resolve_live_lstar(self._current_propellant_name())
+                if self._workflow_mode == "workspace"
+                else self._committed_lstar_m
+            )
+        if active_lstar_m is None:
             return None
         throat_diameter = self._current_throat_diameter_m()
         if throat_diameter is None or throat_diameter <= 0.0:
             return None
         throat_area = (math.pi / 4.0) * throat_diameter**2
         try:
-            return estimate_contraction_ratio_guidance(self._committed_lstar_m * throat_area)
+            return estimate_contraction_ratio_guidance(active_lstar_m * throat_area)
         except ValueError:
             return None
 

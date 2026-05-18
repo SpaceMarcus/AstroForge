@@ -44,6 +44,7 @@ class EngineDesignApplication:
             geometry,
             method=effective_inputs.contour_method,
             bell_variant=effective_inputs.bell_variant,
+            bell_length_fraction_percent=effective_inputs.bell_length_fraction_percent,
             manual_nozzle_length_m=effective_inputs.manual_nozzle_length_m,
             convergent_half_angle_deg=effective_inputs.convergent_half_angle_deg,
             throat_upstream_radius_m=effective_inputs.throat_upstream_radius_m,

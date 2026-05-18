@@ -34,10 +34,13 @@ class ContourPlotFrame(ttk.LabelFrame):
         on_point_selected: Callable[[ThermochemistryProfilePoint], None] | None = None,
         *,
         unit_preset: UnitPreset = UnitPreset.SI_CAD,
+        orientation: str = "horizontal",
     ) -> None:
         super().__init__(master, text="Geometry Contour", padding=12)
         self._on_point_selected = on_point_selected
         self._unit_preset = unit_preset
+        normalized_orientation = orientation.strip().lower()
+        self._orientation = normalized_orientation if normalized_orientation in {"horizontal", "vertical_clockwise"} else "horizontal"
         self._contour: list[NozzlePoint] = []
         self._profile: list[ThermochemistryProfilePoint] = []
         self._markers: list[ContourMarker] = []
@@ -58,7 +61,8 @@ class ContourPlotFrame(ttk.LabelFrame):
             self._axis = None
             return
 
-        self._figure = Figure(figsize=(6, 4), dpi=100)
+        figure_size = (6, 4) if self._orientation == "horizontal" else (3.7, 6.5)
+        self._figure = Figure(figsize=figure_size, dpi=100)
         self._axis = self._figure.add_subplot(111)
         self._canvas = FigureCanvasTkAgg(self._figure, master=self)
         self._canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -90,9 +94,23 @@ class ContourPlotFrame(ttk.LabelFrame):
     def _configure_axis(self) -> None:
         if self._axis is None:
             return
-        self._axis.set_xlabel(format_axis_label("x", "length", self._unit_preset))
-        self._axis.set_ylabel(format_axis_label("r", "length", self._unit_preset))
+        if self._orientation == "vertical_clockwise":
+            self._axis.set_xlabel(format_axis_label("r", "length", self._unit_preset))
+            self._axis.set_ylabel(format_axis_label("x", "length", self._unit_preset))
+            # Rotate the contour clockwise so axial distance runs downward and the
+            # workspace viewer can stay narrow without compressing the input tiles.
+            self._axis.invert_yaxis()
+        else:
+            self._axis.set_xlabel(format_axis_label("x", "length", self._unit_preset))
+            self._axis.set_ylabel(format_axis_label("r", "length", self._unit_preset))
         self._axis.grid(True, linestyle="--", linewidth=0.6, alpha=0.6)
+
+    def _display_coordinates(self, *, x_m: float, radius_m: float) -> tuple[float, float]:
+        x_display = convert_to_display(x_m, "length", self._unit_preset)
+        r_display = convert_to_display(radius_m, "length", self._unit_preset)
+        if self._orientation == "vertical_clockwise":
+            return r_display, x_display
+        return x_display, r_display
 
     def _redraw(self) -> None:
         if self._canvas is None or self._axis is None:
@@ -101,38 +119,59 @@ class ContourPlotFrame(ttk.LabelFrame):
         self._configure_axis()
 
         if self._contour:
-            x_display = [convert_to_display(point.x_m, "length", self._unit_preset) for point in self._contour]
-            r_display = [convert_to_display(point.radius_m, "length", self._unit_preset) for point in self._contour]
-            self._axis.plot(x_display, r_display, color="#c25b2a", linewidth=2.2)
-            self._axis.fill_between(x_display, r_display, color="#f2d2c2", alpha=0.7)
+            coordinates = [
+                self._display_coordinates(x_m=point.x_m, radius_m=point.radius_m)
+                for point in self._contour
+            ]
+            primary_display = [primary for primary, _ in coordinates]
+            secondary_display = [secondary for _, secondary in coordinates]
+            self._axis.plot(primary_display, secondary_display, color="#c25b2a", linewidth=2.2)
+            if self._orientation == "vertical_clockwise":
+                self._axis.fill_betweenx(secondary_display, primary_display, color="#f2d2c2", alpha=0.7)
+            else:
+                self._axis.fill_between(primary_display, secondary_display, color="#f2d2c2", alpha=0.7)
             if self._wall_thickness_m is not None and self._wall_thickness_m > 0.0:
-                wall_display = [
-                    convert_to_display(point.radius_m + self._wall_thickness_m, "length", self._unit_preset)
+                wall_coordinates = [
+                    self._display_coordinates(
+                        x_m=point.x_m,
+                        radius_m=point.radius_m + self._wall_thickness_m,
+                    )
                     for point in self._contour
                 ]
+                wall_primary = [primary for primary, _ in wall_coordinates]
+                wall_secondary = [secondary for _, secondary in wall_coordinates]
                 self._axis.plot(
-                    x_display,
-                    wall_display,
+                    wall_primary,
+                    wall_secondary,
                     color="#6e8598",
                     linewidth=1.8,
                     linestyle="--",
                 )
-            self._axis.axvline(0.0, color="#555555", linestyle="--", linewidth=1.0)
+            if self._orientation == "vertical_clockwise":
+                self._axis.axhline(0.0, color="#555555", linestyle="--", linewidth=1.0)
+            else:
+                self._axis.axvline(0.0, color="#555555", linestyle="--", linewidth=1.0)
             if self._selected_index is not None:
                 selected = self._contour[self._selected_index]
+                selected_primary, selected_secondary = self._display_coordinates(
+                    x_m=selected.x_m,
+                    radius_m=selected.radius_m,
+                )
                 self._axis.scatter(
-                    [convert_to_display(selected.x_m, "length", self._unit_preset)],
-                    [convert_to_display(selected.radius_m, "length", self._unit_preset)],
+                    [selected_primary],
+                    [selected_secondary],
                     color="#1f4f7a",
                     s=48,
                     zorder=5,
                 )
             for marker in self._markers:
-                x_value = convert_to_display(marker.x_m, "length", self._unit_preset)
-                r_value = convert_to_display(marker.radius_m, "length", self._unit_preset)
+                marker_primary, marker_secondary = self._display_coordinates(
+                    x_m=marker.x_m,
+                    radius_m=marker.radius_m,
+                )
                 self._axis.scatter(
-                    [x_value],
-                    [r_value],
+                    [marker_primary],
+                    [marker_secondary],
                     color=marker.color,
                     s=52,
                     marker="o",
@@ -142,7 +181,7 @@ class ContourPlotFrame(ttk.LabelFrame):
                 )
                 self._axis.annotate(
                     marker.label,
-                    (x_value, r_value),
+                    (marker_primary, marker_secondary),
                     textcoords="offset points",
                     xytext=(6, 6),
                     fontsize=8,
@@ -160,12 +199,12 @@ class ContourPlotFrame(ttk.LabelFrame):
         if not self._contour or getattr(event, "xdata", None) is None or getattr(event, "ydata", None) is None:
             return
 
-        x_clicked = float(event.xdata)
-        y_clicked = float(event.ydata)
+        primary_clicked = float(event.xdata)
+        secondary_clicked = float(event.ydata)
         distances = [
             (
-                (convert_to_display(point.x_m, "length", self._unit_preset) - x_clicked) ** 2
-                + (convert_to_display(point.radius_m, "length", self._unit_preset) - y_clicked) ** 2
+                (self._display_coordinates(x_m=point.x_m, radius_m=point.radius_m)[0] - primary_clicked) ** 2
+                + (self._display_coordinates(x_m=point.x_m, radius_m=point.radius_m)[1] - secondary_clicked) ** 2
             )
             for point in self._contour
         ]

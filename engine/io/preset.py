@@ -136,6 +136,7 @@ def load_engine_preset(target_path: str | Path) -> tuple[InputParameters, dict[s
         bell_variant=BellContourVariant(
             raw_inputs.get("bell_variant", BellContourVariant.PARABOLA.value)
         ),
+        bell_length_fraction_percent=_optional_float(raw_inputs, "bell_length_fraction_percent"),
         manual_nozzle_length_m=_optional_float(raw_inputs, "manual_nozzle_length_m"),
         throat_upstream_radius_m=_optional_float(raw_inputs, "throat_upstream_radius_m"),
         throat_downstream_radius_m=_optional_float(raw_inputs, "throat_downstream_radius_m"),

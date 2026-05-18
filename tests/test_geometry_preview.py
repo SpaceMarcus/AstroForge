@@ -99,6 +99,7 @@ def test_build_geometry_preview_bundle_uses_preview_inputs() -> None:
         ambient_pressure_pa=101_325.0,
         contraction_ratio=3.4,
         characteristic_length_m=1.2,
+        bell_length_fraction_percent=90.0,
         throat_upstream_radius_m=0.08,
         throat_downstream_radius_m=0.02,
         convergent_half_angle_deg=38.0,
@@ -109,9 +110,26 @@ def test_build_geometry_preview_bundle_uses_preview_inputs() -> None:
 
     assert preview_bundle.inputs.expansion_ratio == 24.0
     assert preview_bundle.geometry.current_expansion_ratio == 24.0
+    assert preview_bundle.inputs.bell_length_fraction_percent == 90.0
+    assert preview_bundle.inputs.manual_nozzle_length_m is None
+    assert preview_bundle.geometry.top_nozzle_length_fraction_percent == 90.0
     assert preview_bundle.geometry.chamber_radius_m is not None
     assert preview_bundle.contour[0].x_m < 0.0
     assert preview_bundle.contour[-1].x_m > 0.0
+
+
+def test_build_geometry_preview_bundle_marks_preview_profile_as_area_ratio_remap() -> None:
+    base_bundle = _make_base_bundle()
+    preview_bundle = build_geometry_preview_bundle(
+        base_bundle,
+        replace(base_bundle.inputs, chamber_corner_radius_m=0.005),
+    )
+
+    assert any(
+        "preview area-ratio remapped from previous CEA" in point.state.source
+        for point in preview_bundle.thermochemistry_profile
+        if point.region != "chamber"
+    )
 
 
 def test_build_geometry_preview_bundle_uses_last_thermochemistry_gamma_for_flow_case_gate() -> None:

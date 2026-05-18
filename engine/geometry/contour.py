@@ -29,6 +29,7 @@ def generate_nozzle_contour(
     *,
     method: NozzleContourMethod = NozzleContourMethod.BELL,
     bell_variant: BellContourVariant = BellContourVariant.PARABOLA,
+    bell_length_fraction_percent: float | None = None,
     manual_nozzle_length_m: float | None = None,
     chamber_length_m: float | None = None,
     chamber_radius_m: float | None = None,
@@ -115,12 +116,24 @@ def generate_nozzle_contour(
             else []
         )
     elif method is NozzleContourMethod.BELL:
-        current_nozzle_length = manual_nozzle_length_m or 0.80 * reference_conical_length
+        if manual_nozzle_length_m is not None:
+            current_nozzle_length = manual_nozzle_length_m
+        else:
+            resolved_length_fraction_percent = (
+                normalize_top_length_fraction(bell_length_fraction_percent)
+                if bell_length_fraction_percent is not None
+                else 80.0
+            )
+            current_nozzle_length = (resolved_length_fraction_percent / 100.0) * reference_conical_length
         geometry.notes = [
             "Bell parabola uses Rao / Huzel & Huang TOP chart interpolation via pygasflow.",
         ]
         if manual_nozzle_length_m is not None:
             geometry.notes.append("Manual nozzle length applied to the bell-parabola contour.")
+        else:
+            geometry.notes.append(
+                f"Bell length fraction Lf = {resolved_length_fraction_percent:.1f}% drives the TOP contour length."
+            )
     else:
         raise ValueError("Aerospike contours are reserved for a future implementation.")
 
@@ -208,7 +221,12 @@ def build_thermochemistry_profile(
         ),
         contour[0].x_m,
     )
-    exit_x = contour[-1].x_m
+    chamber_area_ratio = (
+        geometry.chamber_area_m2 / geometry.throat_area_m2
+        if geometry.chamber_area_m2 is not None and geometry.throat_area_m2 > 0.0
+        else chamber_state.area_ratio
+    )
+    exit_area_ratio = geometry.exit_area_m2 / max(geometry.throat_area_m2, 1.0e-12)
     profile: list[ThermochemistryProfilePoint] = []
 
     for index, point in enumerate(contour):
@@ -218,13 +236,16 @@ def build_thermochemistry_profile(
             state = replace(chamber_state, area_ratio=area_ratio, source="rocketcea-station")
         elif has_chamber_section and point.x_m < 0.0:
             region = "converging"
-            fraction = (point.x_m - convergent_start_x) / (0.0 - convergent_start_x)
+            if chamber_area_ratio is None or chamber_area_ratio <= 1.0:
+                fraction = (point.x_m - convergent_start_x) / (0.0 - convergent_start_x)
+            else:
+                fraction = (chamber_area_ratio - area_ratio) / max(chamber_area_ratio - 1.0, 1.0e-12)
             state = _interpolate_state(
                 chamber_state,
                 throat_state,
                 fraction,
                 label=region,
-                source="interpolated chamber-to-throat",
+                source="area-ratio interpolated chamber-to-throat",
                 area_ratio=area_ratio,
             )
         elif math.isclose(point.x_m, 0.0, abs_tol=1.0e-12):
@@ -232,13 +253,27 @@ def build_thermochemistry_profile(
             state = replace(throat_state, area_ratio=area_ratio, source="rocketcea-station")
         else:
             region = "diverging"
-            fraction = point.x_m / exit_x if exit_x > 0.0 else 1.0
+            if math.isclose(area_ratio, exit_area_ratio, rel_tol=1.0e-6, abs_tol=1.0e-9) or index == len(contour) - 1:
+                state = replace(exit_state, area_ratio=area_ratio, source="rocketcea-station")
+                state = _augment_with_boundary_metrics(state, streamwise_distances[index])
+                profile.append(
+                    ThermochemistryProfilePoint(
+                        x_m=point.x_m,
+                        radius_m=point.radius_m,
+                        area_m2=point.area_m2,
+                        region=region,
+                        state=state,
+                        station_index=index,
+                    )
+                )
+                continue
+            fraction = (area_ratio - 1.0) / max(exit_area_ratio - 1.0, 1.0e-12)
             state = _interpolate_state(
                 throat_state,
                 exit_state,
                 fraction,
                 label=region,
-                source="interpolated throat-to-exit",
+                source="area-ratio interpolated throat-to-exit",
                 area_ratio=area_ratio,
             )
 

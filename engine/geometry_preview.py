@@ -51,6 +51,7 @@ def build_geometry_preview_bundle(
         geometry,
         method=effective_inputs.contour_method,
         bell_variant=effective_inputs.bell_variant,
+        bell_length_fraction_percent=effective_inputs.bell_length_fraction_percent,
         manual_nozzle_length_m=effective_inputs.manual_nozzle_length_m,
         chamber_length_m=geometry.chamber_length_m,
         chamber_radius_m=geometry.chamber_radius_m,
@@ -63,6 +64,7 @@ def build_geometry_preview_bundle(
     # The thermochemistry profile is remapped onto the new contour so every contour
     # plot and geometry export reads the same preview state.
     thermochemistry_profile = build_thermochemistry_profile(contour, geometry, base_bundle.thermochemistry)
+    _mark_preview_profile_sources(thermochemistry_profile)
     return ExportBundle(
         inputs=effective_inputs,
         thermochemistry=base_bundle.thermochemistry,
@@ -244,3 +246,23 @@ def _material_density_kg_per_m3(material_name: str | None) -> float | None:
 
 def _all_finite(values: list[float]) -> bool:
     return all(math.isfinite(value) for value in values)
+
+
+def _mark_preview_profile_sources(profile: list[ThermochemistryProfilePoint]) -> None:
+    """Label preview profile points so the UI can distinguish remapped gas data.
+
+    Preview bundles intentionally reuse the last committed RocketCEA truth and only
+    remap that truth onto the draft contour. Keeping this label explicit avoids the
+    false impression that the preview already reran CEA for the edited geometry.
+    """
+
+    for point in profile:
+        source = point.state.source
+        if source == "rocketcea-station":
+            continue
+        if "chamber-to-throat" in source:
+            point.state.source = "preview area-ratio remapped from previous CEA (chamber-to-throat)"
+        elif "throat-to-exit" in source:
+            point.state.source = "preview area-ratio remapped from previous CEA (throat-to-exit)"
+        else:
+            point.state.source = "preview area-ratio remapped from previous CEA"
