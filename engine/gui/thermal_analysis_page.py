@@ -12,6 +12,7 @@ from engine.gui.project_panels import ScrollableContentFrame
 from engine.models import ExportBundle, InputParameters
 from engine.thermal_analysis import (
     BartzThroatCurvatureMode,
+    CoolantNusseltMethod,
     CoolingFlowDirection,
     OpticalPathLengthMode,
     ParticipatingMediaModelType,
@@ -55,8 +56,9 @@ _MODEL_TYPE_VALUES = {label: value for value, label in _MODEL_TYPE_LABELS.items(
 _SOLVER_TYPE_LABELS = {
     ThermalSolverType.FORWARD_EULER: "Forward Euler",
     ThermalSolverType.BACKWARD_EULER: "Backward Euler",
-    ThermalSolverType.CRANK_NICOLSON: "Crank-Nicolson",
+    ThermalSolverType.CRANK_NICOLSON: "Crank-Nicolson / Trapezoidal",
     ThermalSolverType.NTU_EXPONENTIAL: "NTU / exponential station model",
+    ThermalSolverType.SIMPSON_CONDUCTANCE: "Simpson conductance averaging",
 }
 _SOLVER_TYPE_VALUES = {label: value for value, label in _SOLVER_TYPE_LABELS.items()}
 
@@ -79,6 +81,15 @@ _BARTZ_CURVATURE_MODE_LABELS = {
 }
 _BARTZ_CURVATURE_MODE_VALUES = {
     label: value for value, label in _BARTZ_CURVATURE_MODE_LABELS.items()
+}
+
+_COOLANT_NUSSELT_METHOD_LABELS = {
+    CoolantNusseltMethod.GNIELINSKI: "Gnielinski",
+    CoolantNusseltMethod.DITTUS_BOELTER: "Dittus-Boelter",
+    CoolantNusseltMethod.SIEDER_TATE: "Sieder-Tate",
+}
+_COOLANT_NUSSELT_METHOD_VALUES = {
+    label: value for value, label in _COOLANT_NUSSELT_METHOD_LABELS.items()
 }
 
 _RADIATION_MODEL_LABELS = {
@@ -157,8 +168,8 @@ _THERMAL_PLOT_FIELDS: dict[str, _ThermalPlotField] = {
     "station_index": _ThermalPlotField("Station index i", None, lambda station: float(station.station_index)),
     "x_start": _ThermalPlotField("x_start", "length", lambda station: station.x_start_m),
     "x_end": _ThermalPlotField("x_end", "length", lambda station: station.x_end_m),
-    "x_mid": _ThermalPlotField("x", "length", lambda station: station.x_mid_m),
-    "r_inner": _ThermalPlotField("r(x)", "length", lambda station: station.r_inner_m),
+    "x_mid": _ThermalPlotField("x", "length", lambda station: station.x_ref_m),
+    "r_inner": _ThermalPlotField("r(x)", "length", lambda station: station.r_ref_m or station.r_inner_m),
     "r_outer": _ThermalPlotField("r_outer", "length", lambda station: station.r_outer_m),
     "r_mean": _ThermalPlotField("r_mean", "length", lambda station: station.r_mean_m),
     "a_gas": _ThermalPlotField("A_gas", "area", lambda station: station.area_gas_m2),
@@ -174,7 +185,7 @@ _THERMAL_PLOT_FIELDS: dict[str, _ThermalPlotField] = {
     "q_rad": _ThermalPlotField("Radiative heat flux q''_rad", "heat_flux", lambda station: station.q_rad_w_per_m2),
     "q_total": _ThermalPlotField("Total heat flux q''_total", "heat_flux", lambda station: station.q_total_w_per_m2),
     "t_c_in": _ThermalPlotField("T_c_in", "temperature", lambda station: station.coolant_temperature_in_k),
-    "t_c_bulk": _ThermalPlotField("T_c_bulk", "temperature", lambda station: station.coolant_temperature_bulk_k),
+    "t_c_bulk": _ThermalPlotField("T_b,c", "temperature", lambda station: station.coolant_temperature_bulk_k),
     "t_c_out": _ThermalPlotField("T_c_out", "temperature", lambda station: station.coolant_temperature_out_k),
     "t_wg": _ThermalPlotField("T_wg", "temperature", lambda station: station.wall_temperature_hot_gas_side_k),
     "t_wc": _ThermalPlotField("T_wc", "temperature", lambda station: station.wall_temperature_coolant_side_k),
@@ -184,10 +195,18 @@ _THERMAL_PLOT_FIELDS: dict[str, _ThermalPlotField] = {
     "p_required_out": _ThermalPlotField("p_required_out", "pressure", lambda station: station.required_pressure_out_pa),
     "delta_p_station": _ThermalPlotField("Delta_p_station", "pressure", lambda station: station.pressure_drop_station_pa),
     "re_coolant": _ThermalPlotField("Re_coolant", None, lambda station: station.reynolds_coolant),
+    "pr_coolant": _ThermalPlotField("Pr_coolant", None, lambda station: station.coolant_prandtl_number),
     "coolant_cp": _ThermalPlotField("Coolant cp", "specific_heat", lambda station: station.coolant_cp_j_per_kg_k),
     "coolant_viscosity": _ThermalPlotField("Coolant viscosity µ", "viscosity", lambda station: station.coolant_viscosity_pa_s),
     "nu_coolant": _ThermalPlotField("Nu_coolant", None, lambda station: station.nusselt_coolant),
+    "nu_db": _ThermalPlotField("Nu_DB", None, lambda station: station.nusselt_dittus_boelter),
+    "nu_st": _ThermalPlotField("Nu_ST", None, lambda station: station.nusselt_sieder_tate),
+    "nu_gn": _ThermalPlotField("Nu_Gnielinski", None, lambda station: station.nusselt_gnielinski),
+    "nu_spread": _ThermalPlotField("Nu spread", None, lambda station: station.nusselt_spread_fraction),
     "friction_factor": _ThermalPlotField("friction_factor", None, lambda station: station.friction_factor),
+    "h_c_db": _ThermalPlotField("h_c DB", "heat_transfer_coefficient", lambda station: station.h_c_dittus_boelter_w_per_m2_k),
+    "h_c_st": _ThermalPlotField("h_c ST", "heat_transfer_coefficient", lambda station: station.h_c_sieder_tate_w_per_m2_k),
+    "h_c_gn": _ThermalPlotField("h_c Gnielinski", "heat_transfer_coefficient", lambda station: station.h_c_gnielinski_w_per_m2_k),
     "gas_emissivity": _ThermalPlotField("Gas effective emissivity", None, lambda station: station.gas_effective_emissivity),
     "radiation_fraction": _ThermalPlotField(
         "Radiation fraction",
@@ -371,20 +390,25 @@ class ExistingDesignContextCard(ttk.LabelFrame):
 
 
 class AnnulusCoolingCard(ttk.LabelFrame):
-    """Editable thermal-model inputs for the MVP thermal page."""
+    """Editable thermal-model inputs and scenario skeleton for the MVP page."""
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset) -> None:
         super().__init__(master, text="Thermal Model Setup", padding=12)
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
         self._unit_preset = unit_preset
         self._field_labels: dict[str, ttk.Label] = {}
-        self._model_note_var = tk.StringVar(value="")
+        self._coolant_type_var = tk.StringVar(value="RP-1")
+        self._mechanism_note_var = tk.StringVar(value="")
+        self._scenario_summary_var = tk.StringVar(value="")
         self._variables = {
             "model_type": tk.StringVar(value=_MODEL_TYPE_LABELS[ThermalModelType.ANNULUS]),
             "coolant_mass_flow": tk.StringVar(value=""),
             "coolant_inlet_temperature": tk.StringVar(value=""),
             "annulus_gap": tk.StringVar(value=""),
             "roughness": tk.StringVar(value=""),
+            "primary_nusselt_method": tk.StringVar(
+                value=_COOLANT_NUSSELT_METHOD_LABELS[CoolantNusseltMethod.GNIELINSKI]
+            ),
             "bartz_curvature_mode": tk.StringVar(
                 value=_BARTZ_CURVATURE_MODE_LABELS[BartzThroatCurvatureMode.UPSTREAM]
             ),
@@ -395,98 +419,174 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             "pump_discharge_pressure": tk.StringVar(value=""),
             "flow_direction": tk.StringVar(value=_FLOW_DIRECTION_LABELS[CoolingFlowDirection.NOZZLE_TO_INJECTOR]),
         }
-        self._variables["model_type"].trace_add("write", self._handle_model_changed)
-        self._variables["pressure_mode"].trace_add("write", self._handle_pressure_mode_changed)
+        for key in (
+            "model_type",
+            "coolant_inlet_temperature",
+            "primary_nusselt_method",
+            "bartz_curvature_mode",
+            "pressure_mode",
+            "flow_direction",
+        ):
+            self._variables[key].trace_add("write", self._handle_general_changed)
         self._pump_pressure_entry: ttk.Entry | None = None
         self._build_widgets()
 
     def _build_widgets(self) -> None:
-        ttk.Label(self, text="Thermal model").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        header = ttk.Frame(self)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        ttk.Label(header, text="Thermal model").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Combobox(
-            self,
+            header,
             state="readonly",
             textvariable=self._variables["model_type"],
             values=list(_MODEL_TYPE_VALUES),
         ).grid(row=0, column=1, sticky="ew", pady=4)
 
-        self._field_labels["coolant_mass_flow"] = ttk.Label(self)
+        global_frame = ttk.LabelFrame(self, text="Global Boundary Conditions", padding=10)
+        global_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        global_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(global_frame, text="Coolant type").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(global_frame, textvariable=self._coolant_type_var).grid(row=0, column=1, sticky="w", pady=4)
+
+        self._field_labels["coolant_mass_flow"] = ttk.Label(global_frame)
         self._field_labels["coolant_mass_flow"].grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["coolant_mass_flow"]).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["coolant_mass_flow"]).grid(row=1, column=1, sticky="ew", pady=4)
 
-        self._field_labels["coolant_inlet_temperature"] = ttk.Label(self)
+        self._field_labels["coolant_inlet_temperature"] = ttk.Label(global_frame)
         self._field_labels["coolant_inlet_temperature"].grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["coolant_inlet_temperature"]).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["coolant_inlet_temperature"]).grid(row=2, column=1, sticky="ew", pady=4)
 
-        self._field_labels["annulus_gap"] = ttk.Label(self)
-        self._field_labels["annulus_gap"].grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["annulus_gap"]).grid(row=3, column=1, sticky="ew", pady=4)
-
-        self._field_labels["roughness"] = ttk.Label(self)
-        self._field_labels["roughness"].grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["roughness"]).grid(row=4, column=1, sticky="ew", pady=4)
-
-        ttk.Label(self, text="Bartz throat curvature Rc,t").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(global_frame, text="Pressure mode").grid(row=3, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Combobox(
-            self,
-            state="readonly",
-            textvariable=self._variables["bartz_curvature_mode"],
-            values=list(_BARTZ_CURVATURE_MODE_VALUES),
-        ).grid(row=5, column=1, sticky="ew", pady=4)
-
-        ttk.Label(self, text="Cooling flow direction").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Combobox(
-            self,
-            state="readonly",
-            textvariable=self._variables["flow_direction"],
-            values=list(_FLOW_DIRECTION_VALUES),
-        ).grid(row=6, column=1, sticky="ew", pady=4)
-
-        ttk.Label(self, text="Pressure mode").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Combobox(
-            self,
+            global_frame,
             state="readonly",
             textvariable=self._variables["pressure_mode"],
             values=list(_PRESSURE_MODE_VALUES),
-        ).grid(row=7, column=1, sticky="ew", pady=4)
+        ).grid(row=3, column=1, sticky="ew", pady=4)
 
-        self._field_labels["injector_pressure_drop"] = ttk.Label(self)
-        self._field_labels["injector_pressure_drop"].grid(row=8, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["injector_pressure_drop"]).grid(row=8, column=1, sticky="ew", pady=4)
+        self._field_labels["injector_pressure_drop"] = ttk.Label(global_frame)
+        self._field_labels["injector_pressure_drop"].grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["injector_pressure_drop"]).grid(row=4, column=1, sticky="ew", pady=4)
 
-        self._field_labels["pressure_margin"] = ttk.Label(self)
-        self._field_labels["pressure_margin"].grid(row=9, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["pressure_margin"]).grid(row=9, column=1, sticky="ew", pady=4)
+        self._field_labels["pressure_margin"] = ttk.Label(global_frame)
+        self._field_labels["pressure_margin"].grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["pressure_margin"]).grid(row=5, column=1, sticky="ew", pady=4)
 
-        self._field_labels["external_feed_pressure_drop"] = ttk.Label(self)
-        self._field_labels["external_feed_pressure_drop"].grid(row=10, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["external_feed_pressure_drop"]).grid(row=10, column=1, sticky="ew", pady=4)
+        self._field_labels["external_feed_pressure_drop"] = ttk.Label(global_frame)
+        self._field_labels["external_feed_pressure_drop"].grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["external_feed_pressure_drop"]).grid(row=6, column=1, sticky="ew", pady=4)
 
-        self._field_labels["pump_discharge_pressure"] = ttk.Label(self)
-        self._field_labels["pump_discharge_pressure"].grid(row=11, column=0, sticky="w", padx=(0, 10), pady=4)
-        self._pump_pressure_entry = ttk.Entry(self, textvariable=self._variables["pump_discharge_pressure"])
-        self._pump_pressure_entry.grid(row=11, column=1, sticky="ew", pady=4)
+        self._field_labels["pump_discharge_pressure"] = ttk.Label(global_frame)
+        self._field_labels["pump_discharge_pressure"].grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
+        self._pump_pressure_entry = ttk.Entry(global_frame, textvariable=self._variables["pump_discharge_pressure"])
+        self._pump_pressure_entry.grid(row=7, column=1, sticky="ew", pady=4)
 
-        ttk.Label(self, text="Fixed mechanical assumption").grid(row=12, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Label(self, text="3 spacer ribs").grid(row=12, column=1, sticky="w", pady=4)
+        self._field_labels["annulus_gap"] = ttk.Label(global_frame)
+        self._field_labels["annulus_gap"].grid(row=8, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["annulus_gap"]).grid(row=8, column=1, sticky="ew", pady=4)
 
+        self._field_labels["roughness"] = ttk.Label(global_frame)
+        self._field_labels["roughness"].grid(row=9, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(global_frame, textvariable=self._variables["roughness"]).grid(row=9, column=1, sticky="ew", pady=4)
+
+        circuit_frame = ttk.LabelFrame(self, text="Coolant Circuit", padding=10)
+        circuit_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        circuit_frame.columnconfigure(1, weight=1)
+        ttk.Label(circuit_frame, text="Flow direction").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Combobox(
+            circuit_frame,
+            state="readonly",
+            textvariable=self._variables["flow_direction"],
+            values=list(_FLOW_DIRECTION_VALUES),
+        ).grid(row=0, column=1, sticky="ew", pady=4)
         ttk.Label(
-            self,
-            textvariable=self._model_note_var,
-            wraplength=460,
+            circuit_frame,
+            text="One coolant pass is active in the MVP. Multi-pass coolant circuits are planned for a later step.",
+            wraplength=900,
             justify="left",
             foreground="#667381",
-        ).grid(row=13, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
+        mechanism_frame = ttk.LabelFrame(self, text="Heat-Transfer Mechanisms", padding=10)
+        mechanism_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        mechanism_frame.columnconfigure(1, weight=1)
+        ttk.Label(mechanism_frame, text="Bartz throat curvature Rc,t").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Combobox(
+            mechanism_frame,
+            state="readonly",
+            textvariable=self._variables["bartz_curvature_mode"],
+            values=list(_BARTZ_CURVATURE_MODE_VALUES),
+        ).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(mechanism_frame, text="Primary coolant-side Nu_c model").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Combobox(
+            mechanism_frame,
+            state="readonly",
+            textvariable=self._variables["primary_nusselt_method"],
+            values=list(_COOLANT_NUSSELT_METHOD_VALUES),
+        ).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            mechanism_frame,
+            text="Used for the heat balance. All listed Nu_c correlations are still computed in the background for comparison.",
+            wraplength=900,
+            justify="left",
+            foreground="#667381",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+
+        axial_frame = ttk.LabelFrame(self, text="Axial Conditions", padding=10)
+        axial_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        axial_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            axial_frame,
+            text="Cooling active range: full contour (MVP). Range-local conditions are stored as workflow placeholders for now.",
+            wraplength=900,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(axial_frame, text="Add condition (planned)", state="disabled").grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        plan_frame = ttk.LabelFrame(self, text="Solver Plan", padding=10)
+        plan_frame.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        plan_frame.columnconfigure(1, weight=1)
+        ttk.Label(plan_frame, text="Execution mode").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(plan_frame, text="Single run").grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Label(plan_frame, text="Model precalculation").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(
+            plan_frame,
+            text="Build annulus R-network from the active coolant circuit before solving the thermal stations.",
+            wraplength=900,
+            justify="left",
+        ).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(plan_frame, text="Background comparison").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Label(plan_frame, text="DB / ST / Gnielinski always evaluated").grid(row=2, column=1, sticky="w", pady=4)
+
+        assumptions_frame = ttk.LabelFrame(self, text="Fixed Mechanism Assumptions", padding=10)
+        assumptions_frame.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        assumptions_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            assumptions_frame,
+            textvariable=self._mechanism_note_var,
+            wraplength=900,
+            justify="left",
+            foreground="#667381",
+        ).grid(row=0, column=0, sticky="ew")
+        ttk.Label(
+            assumptions_frame,
+            text=(
+                "Spacer ribs are shown as a mechanical support assumption only and are not included in the MVP annulus thermal-hydraulic calculation."
+            ),
+            wraplength=900,
+            justify="left",
+            foreground="#7d4d1b",
+        ).grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
         ttk.Label(
             self,
-            text=(
-                "Spacer ribs are shown as a mechanical support assumption only and are not included in the MVP annulus "
-                "thermal-hydraulic calculation."
-            ),
-            wraplength=460,
+            textvariable=self._scenario_summary_var,
+            wraplength=980,
             justify="left",
-            foreground="#7d4d1b",
-        ).grid(row=14, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            foreground="#244a6d",
+        ).grid(row=7, column=0, sticky="ew", pady=(12, 0))
 
         self._apply_unit_labels()
         self._refresh_model_note()
@@ -521,8 +621,10 @@ class AnnulusCoolingCard(ttk.LabelFrame):
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         self._unit_preset = unit_preset
         self._apply_unit_labels()
+        self._refresh_model_note()
 
     def set_inputs(self, inputs: ThermalAnalysisInputs) -> None:
+        self._coolant_type_var.set(inputs.coolant_type or "RP-1")
         self._variables["model_type"].set(_MODEL_TYPE_LABELS[inputs.model_type])
         self._variables["coolant_mass_flow"].set(
             "" if inputs.coolant_mass_flow_kg_per_s is None else format_quantity(inputs.coolant_mass_flow_kg_per_s, "mass_flow", self._unit_preset)
@@ -532,6 +634,9 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         )
         self._variables["annulus_gap"].set(format_quantity(inputs.annulus_gap_m, "length", self._unit_preset))
         self._variables["roughness"].set(format_quantity(inputs.coolant_roughness_m, "length", self._unit_preset))
+        self._variables["primary_nusselt_method"].set(
+            _COOLANT_NUSSELT_METHOD_LABELS[inputs.primary_coolant_nusselt_method]
+        )
         self._variables["bartz_curvature_mode"].set(
             _BARTZ_CURVATURE_MODE_LABELS[inputs.bartz_throat_curvature_mode]
         )
@@ -563,6 +668,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         )
         annulus_gap = _parse_required_float(self._variables["annulus_gap"].get(), "Annulus gap height", errors)
         roughness = _parse_required_float(self._variables["roughness"].get(), "Coolant roughness", errors)
+        primary_nusselt_method = _COOLANT_NUSSELT_METHOD_VALUES.get(self._variables["primary_nusselt_method"].get())
         bartz_curvature_mode = _BARTZ_CURVATURE_MODE_VALUES.get(self._variables["bartz_curvature_mode"].get())
         pressure_mode = _PRESSURE_MODE_VALUES.get(self._variables["pressure_mode"].get())
         injector_pressure_drop = _parse_required_float(
@@ -589,6 +695,9 @@ class AnnulusCoolingCard(ttk.LabelFrame):
         if model_type is None:
             errors.append("Thermal model is invalid.")
             model_type = ThermalModelType.ANNULUS
+        if primary_nusselt_method is None:
+            errors.append("Primary coolant-side Nu_c model is invalid.")
+            primary_nusselt_method = CoolantNusseltMethod.GNIELINSKI
         if pressure_mode is None:
             errors.append("Pressure mode is invalid.")
             pressure_mode = PressureCalculationMode.BACKWARD_REQUIRED_PUMP
@@ -610,6 +719,7 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             ),
             "annulus_gap_m": _convert_lengthless_quantity(annulus_gap, "length", self._unit_preset),
             "coolant_roughness_m": _convert_lengthless_quantity(roughness, "length", self._unit_preset),
+            "primary_coolant_nusselt_method": primary_nusselt_method,
             "bartz_throat_curvature_mode": bartz_curvature_mode,
             "pressure_mode": pressure_mode,
             "injector_pressure_drop_pa": _convert_lengthless_quantity(
@@ -635,22 +745,51 @@ class AnnulusCoolingCard(ttk.LabelFrame):
             "flow_direction": flow_direction,
         }
 
-    def _handle_model_changed(self, *_args: object) -> None:
+    def _handle_general_changed(self, *_args: object) -> None:
         self._refresh_model_note()
+        self._refresh_pressure_mode()
 
     def _refresh_model_note(self) -> None:
         model_type = _MODEL_TYPE_VALUES.get(self._variables["model_type"].get(), ThermalModelType.ANNULUS)
+        primary_method = _COOLANT_NUSSELT_METHOD_VALUES.get(
+            self._variables["primary_nusselt_method"].get(),
+            CoolantNusseltMethod.GNIELINSKI,
+        )
         if model_type is ThermalModelType.ANNULUS:
-            self._model_note_var.set(
-                "Annulus cooling is the active MVP reference model. It uses the current inner contour r(x), a uniform annulus gap and a separate post-processed pressure reconstruction. The gas-side heat transfer now uses a steady-state Bartz-style correlation based on the existing CEA/profile properties and the selected throat-curvature reference. The coolant-side correlations assume fully developed annular flow everywhere. That is conservative for wall heat transfer because real inlet regions often have stronger eddies and therefore higher local h-values than this baseline."
+            self._mechanism_note_var.set(self._selected_nusselt_note(primary_method))
+        else:
+            self._mechanism_note_var.set(
+                "This option is shown so later channel and film-cooling models already have a clear place in the workflow. The current MVP still calculates annulus cooling only."
             )
-            return
-        self._model_note_var.set(
-            "This option is shown so later channel and film-cooling models already have a clear place in the workflow. The current MVP still calculates annulus cooling only."
+        self._scenario_summary_var.set(self._scenario_story(primary_method))
+
+    def _selected_nusselt_note(self, method: CoolantNusseltMethod) -> str:
+        if method is CoolantNusseltMethod.GNIELINSKI:
+            return (
+                "Gnielinski turbulent internal-flow correlation. Suggested range: Re≈3e3...5e6, Pr≈0.5...2000. Uses Darcy friction factor f. Annulus/channel correction is not calibrated in the MVP. These correlations are internal-flow screening correlations. Re/Pr range warnings indicate extrapolation, not automatic failure."
+            )
+        if method is CoolantNusseltMethod.SIEDER_TATE:
+            return (
+                "Sieder-Tate turbulent internal-flow correlation with viscosity-ratio correction. Requires µ_bulk and µ_wall. Useful for strong property variation. These correlations are internal-flow screening correlations. Re/Pr range warnings indicate extrapolation, not automatic failure."
+            )
+        return (
+            "Dittus-Boelter smooth-tube turbulent baseline. Simple screening model with no explicit viscosity-ratio or friction-factor coupling. Suggested range: Re>=1e4 and about 0.7<=Pr<=160. These correlations are internal-flow screening correlations. Re/Pr range warnings indicate extrapolation, not automatic failure."
         )
 
-    def _handle_pressure_mode_changed(self, *_args: object) -> None:
-        self._refresh_pressure_mode()
+    def _scenario_story(self, primary_method: CoolantNusseltMethod) -> str:
+        coolant_temp = self._variables["coolant_inlet_temperature"].get().strip() or "--"
+        flow_direction = self._variables["flow_direction"].get().strip() or "--"
+        pressure_mode = self._variables["pressure_mode"].get().strip() or "--"
+        return (
+            "Thermal Scenario: Annulus baseline. "
+            f"Coolant {self._coolant_type_var.get()} enters at {coolant_temp}. "
+            f"Flow path: {flow_direction}, one pass. "
+            f"Hot-gas convection: Bartz. "
+            f"Coolant convection: {primary_method.value} selected; DB/ST/Gnielinski computed for comparison. "
+            "Radiation: configured separately below. "
+            "Cooling active range: full contour. "
+            f"Pressure mode: {pressure_mode}."
+        )
 
     def _refresh_pressure_mode(self) -> None:
         pressure_mode = _PRESSURE_MODE_VALUES.get(
@@ -1046,8 +1185,10 @@ class SolverSettingsCard(ttk.LabelFrame):
             "relaxation_factor": tk.StringVar(value="0.6"),
         }
         self._station_mode_note_var = tk.StringVar(value="")
+        self._solver_reference_note_var = tk.StringVar(value="")
         self._station_count_entry: ttk.Entry | None = None
         self._variables["station_distribution_mode"].trace_add("write", self._handle_station_mode_changed)
+        self._variables["solver_type"].trace_add("write", self._handle_solver_reference_changed)
         self._build_widgets()
 
     def _build_widgets(self) -> None:
@@ -1079,15 +1220,24 @@ class SolverSettingsCard(ttk.LabelFrame):
             foreground="#667381",
         ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(2, 4))
 
-        ttk.Label(self, text="Station tolerance").grid(row=4, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["station_tolerance"]).grid(row=4, column=1, sticky="ew", pady=4)
+        ttk.Label(
+            self,
+            textvariable=self._solver_reference_note_var,
+            wraplength=420,
+            justify="left",
+            foreground="#667381",
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 4))
 
-        ttk.Label(self, text="Maximum iterations per station").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["max_iterations"]).grid(row=5, column=1, sticky="ew", pady=4)
+        ttk.Label(self, text="Station tolerance").grid(row=5, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(self, textvariable=self._variables["station_tolerance"]).grid(row=5, column=1, sticky="ew", pady=4)
 
-        ttk.Label(self, text="Relaxation factor").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(self, textvariable=self._variables["relaxation_factor"]).grid(row=6, column=1, sticky="ew", pady=4)
+        ttk.Label(self, text="Maximum iterations per station").grid(row=6, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(self, textvariable=self._variables["max_iterations"]).grid(row=6, column=1, sticky="ew", pady=4)
+
+        ttk.Label(self, text="Relaxation factor").grid(row=7, column=0, sticky="w", padx=(0, 10), pady=4)
+        ttk.Entry(self, textvariable=self._variables["relaxation_factor"]).grid(row=7, column=1, sticky="ew", pady=4)
         self._refresh_station_mode()
+        self._refresh_solver_reference_note()
 
     def set_inputs(self, settings: SolverSettings) -> None:
         self._variables["solver_type"].set(_SOLVER_TYPE_LABELS[settings.solver_type])
@@ -1097,6 +1247,7 @@ class SolverSettingsCard(ttk.LabelFrame):
         self._variables["max_iterations"].set(str(settings.max_iterations_per_station))
         self._variables["relaxation_factor"].set(f"{settings.relaxation_factor:.3f}")
         self._refresh_station_mode()
+        self._refresh_solver_reference_note()
 
     def get_settings(self) -> SolverSettings:
         errors: list[str] = []
@@ -1144,6 +1295,9 @@ class SolverSettingsCard(ttk.LabelFrame):
     def _handle_station_mode_changed(self, *_args: object) -> None:
         self._refresh_station_mode()
 
+    def _handle_solver_reference_changed(self, *_args: object) -> None:
+        self._refresh_solver_reference_note()
+
     def _refresh_station_mode(self) -> None:
         mode = _STATION_MODE_VALUES.get(self._variables["station_distribution_mode"].get(), StationDistributionMode.MANUAL)
         if self._station_count_entry is not None:
@@ -1156,6 +1310,40 @@ class SolverSettingsCard(ttk.LabelFrame):
             self._station_mode_note_var.set(
                 "Uses the currently available CEA/profile stations. Calculate Current Design first if this count is not ready yet."
             )
+
+    def _refresh_solver_reference_note(self) -> None:
+        solver_type = _SOLVER_TYPE_VALUES.get(
+            self._variables["solver_type"].get(),
+            ThermalSolverType.NTU_EXPONENTIAL,
+        )
+        if solver_type is ThermalSolverType.FORWARD_EULER:
+            explanation = (
+                "Forward Euler: station conductance is evaluated at the coolant-upstream side of each station. "
+                "T_c,out is advanced explicitly."
+            )
+        elif solver_type is ThermalSolverType.BACKWARD_EULER:
+            explanation = (
+                "Backward Euler: station conductance is evaluated with the downstream/outlet state and solved iteratively."
+            )
+        elif solver_type is ThermalSolverType.CRANK_NICOLSON:
+            explanation = (
+                "Crank-Nicolson: station conductance is averaged from coolant-upstream and coolant-downstream states "
+                "using a trapezoidal rule."
+            )
+        elif solver_type is ThermalSolverType.SIMPSON_CONDUCTANCE:
+            explanation = (
+                "Simpson conductance averaging: G = integral(h dA) is evaluated with start/mid/end station samples. "
+                "This is a high-order station averaging option, not a different Nu correlation."
+            )
+        else:
+            explanation = (
+                "NTU / exponential: each station is treated as a lumped heat-exchanger segment with a "
+                "station-representative conductance and an exponential outlet-temperature relation."
+            )
+        self._solver_reference_note_var.set(
+            explanation
+            + " T_b,c is solved by the selected station scheme and is used for coolant properties, Re_c, Pr_c, Nu_c, h_c and pressure drop."
+        )
 
 
 class FutureChannelDefinitionPanel(ttk.LabelFrame):
@@ -1310,53 +1498,26 @@ class ThermalSummaryTiles(ttk.LabelFrame):
 
 
 class ThermalStationResultsTable(ttk.LabelFrame):
-    """Wide horizontally scrollable station result table."""
+    """Compact engineering summary table plus grouped station details."""
 
     _COLUMNS = (
+        "main_status",
+        "region",
         "station_index",
-        "x_start",
-        "x_end",
-        "x_mid",
-        "r_inner",
-        "r_outer",
-        "r_mean",
-        "a_gas",
-        "a_hot",
-        "a_annulus",
-        "d_h",
+        "x_ref",
+        "r_ref",
+        "eps_ref",
         "t_recovery",
+        "t_c_bulk",
         "h_g",
         "h_c",
-        "q_station",
-        "q_hot",
-        "t_c_in",
-        "t_c_bulk",
-        "t_c_out",
-        "t_wg",
-        "t_wc",
-        "delta_t_wall",
-        "p_required_in",
-        "p_required_out",
-        "delta_p_station",
-        "re_coolant",
         "nu_coolant",
-        "friction_factor",
-        "thermal_margin",
-        "wall_mean_temperature",
-        "pressure_delta",
-        "hoop_stress",
-        "longitudinal_stress",
-        "thermal_strain",
-        "thermal_stress",
-        "von_mises_stress",
-        "material_yield_strength",
-        "material_strength_margin",
-        "total_screening_strain",
-        "material_margin_status",
-        "closeout_thickness",
-        "closeout_hoop_stress",
-        "closeout_material_strength_margin",
-        "status_summary",
+        "re_coolant",
+        "pr_coolant",
+        "t_wc",
+        "t_wg",
+        "q_hot",
+        "delta_p_station",
         "warning_summary",
     )
 
@@ -1364,8 +1525,10 @@ class ThermalStationResultsTable(ttk.LabelFrame):
         super().__init__(master, text="Station Results", padding=12)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
+        self.rowconfigure(2, weight=0)
         self._unit_preset = unit_preset
         self._result: ThermalAnalysisResult | None = None
+        self._stations_by_item_id: dict[str, ThermalStationResult] = {}
         self._tree = ttk.Treeview(self, columns=self._COLUMNS, show="headings", height=16)
         self._tree.grid(row=0, column=0, sticky="nsew")
         y_scroll = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
@@ -1373,72 +1536,77 @@ class ThermalStationResultsTable(ttk.LabelFrame):
         x_scroll = ttk.Scrollbar(self, orient="horizontal", command=self._tree.xview)
         x_scroll.grid(row=1, column=0, sticky="ew")
         self._tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        self._tree.bind("<<TreeviewSelect>>", self._handle_selection_changed)
         self._configure_columns()
+        self._detail_vars = {
+            "geometry": tk.StringVar(value="Select a station row to inspect grouped details."),
+            "gas_coolant": tk.StringVar(value="Select a station row to inspect grouped details."),
+            "temperatures": tk.StringVar(value="Select a station row to inspect grouped details."),
+            "dimensionless": tk.StringVar(value="Select a station row to inspect grouped details."),
+            "pressure": tk.StringVar(value="Select a station row to inspect grouped details."),
+            "mechanical": tk.StringVar(value="Select a station row to inspect grouped details."),
+            "solver_notes": tk.StringVar(value="Select a station row to inspect grouped details."),
+        }
+        self._build_detail_groups()
 
     def _configure_columns(self) -> None:
-        stress_unit = get_unit_symbol("stress", self._unit_preset)
-
-        def stress_heading(base_label: str) -> str:
-            return f"{base_label} [{stress_unit}]" if stress_unit else base_label
-
         headings = {
-            "station_index": "Station index i",
-            "x_start": "x_start",
-            "x_end": "x_end",
-            "x_mid": "x_mid",
-            "r_inner": "r_inner",
-            "r_outer": "r_outer",
-            "r_mean": "r_mean",
-            "a_gas": "A_gas",
-            "a_hot": "A_hot",
-            "a_annulus": "A_annulus",
-            "d_h": "D_h",
-            "t_recovery": "T_recovery",
-            "h_g": "h_g",
-            "h_c": "h_c",
-            "q_station": "Q_station",
-            "q_hot": "q_hot",
-            "t_c_in": "T_c_in",
-            "t_c_bulk": "T_c_bulk",
-            "t_c_out": "T_c_out",
-            "t_wg": "T_wg",
+            "main_status": "Status",
+            "region": "Region",
+            "station_index": "i",
+            "x_ref": "x",
+            "r_ref": "r",
+            "eps_ref": "eps",
+            "t_recovery": "T_aw",
+            "t_c_bulk": "T_b,c",
+            "h_g": "h_g,station",
+            "h_c": "h_c,station",
+            "nu_coolant": "Nu_c,station",
+            "re_coolant": "Re_c",
+            "pr_coolant": "Pr_c",
             "t_wc": "T_wc",
-            "delta_t_wall": "Delta_T_wall",
-            "p_required_in": "p_required_in",
-            "p_required_out": "p_required_out",
-            "delta_p_station": "Delta_p_station",
-            "re_coolant": "Re_coolant",
-            "nu_coolant": "Nu_coolant",
-            "friction_factor": "friction_factor",
-            "thermal_margin": "thermal_margin",
-            "wall_mean_temperature": "T_wall_mean",
-            "pressure_delta": "Delta_p_wall",
-            "hoop_stress": stress_heading("sigma_hoop"),
-            "longitudinal_stress": stress_heading("sigma_longitudinal"),
-            "thermal_strain": "epsilon_thermal",
-            "thermal_stress": stress_heading("sigma_thermal_indicator"),
-            "von_mises_stress": stress_heading("sigma_vm"),
-            "material_yield_strength": stress_heading("yield_strength"),
-            "material_strength_margin": "screening_margin_Rp0.2(T)",
-            "total_screening_strain": "epsilon_total",
-            "material_margin_status": "material_margin_status",
-            "closeout_thickness": "closeout_thickness",
-            "closeout_hoop_stress": stress_heading("sigma_closeout"),
-            "closeout_material_strength_margin": "closeout_margin",
-            "status_summary": "status",
+            "t_wg": "T_wg",
+            "q_hot": "q''",
+            "delta_p_station": "Delta_p",
             "warning_summary": "warnings",
         }
         for key in self._COLUMNS:
             self._tree.heading(key, text=headings[key])
-            if key == "status_summary":
-                width = 220
+            if key == "main_status":
+                width = 90
+            elif key == "region":
+                width = 110
             elif key == "warning_summary":
                 width = 320
-            elif key == "material_margin_status":
-                width = 130
             else:
                 width = 110
             self._tree.column(key, width=width, stretch=False, anchor="center")
+
+    def _build_detail_groups(self) -> None:
+        details = ttk.LabelFrame(self, text="Station Details", padding=10)
+        details.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        for column in range(3):
+            details.columnconfigure(column, weight=1)
+        definitions = [
+            ("Geometry", "geometry", 0, 0, 1),
+            ("Gas / Coolant Properties", "gas_coolant", 0, 1, 1),
+            ("Temperatures", "temperatures", 0, 2, 1),
+            ("Dimensionless / Correlations", "dimensionless", 1, 0, 1),
+            ("Pressure", "pressure", 1, 1, 1),
+            ("Mechanical", "mechanical", 1, 2, 1),
+            ("Solver / Numerical Notes", "solver_notes", 2, 0, 3),
+        ]
+        for title, key, row, column, columnspan in definitions:
+            card = ttk.LabelFrame(details, text=title, padding=8)
+            card.grid(row=row, column=column, columnspan=columnspan, sticky="nsew", padx=4, pady=4)
+            card.columnconfigure(0, weight=1)
+            wraplength = 320 if columnspan == 1 else 1020
+            ttk.Label(
+                card,
+                textvariable=self._detail_vars[key],
+                justify="left",
+                wraplength=wraplength,
+            ).grid(row=0, column=0, sticky="ew")
 
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         self._unit_preset = unit_preset
@@ -1448,65 +1616,62 @@ class ThermalStationResultsTable(ttk.LabelFrame):
 
     def clear(self) -> None:
         self._result = None
+        self._stations_by_item_id.clear()
         for item in self._tree.get_children():
             self._tree.delete(item)
+        for detail_var in self._detail_vars.values():
+            detail_var.set("Select a station row to inspect grouped details.")
 
     def update_result(self, result: ThermalAnalysisResult) -> None:
         self._result = result
         self.clear()
         self._result = result
         for station in result.stations:
-            self._tree.insert(
+            item_id = self._tree.insert(
                 "",
                 "end",
                 values=(
-                    station.station_index,
-                    _fmt_quantity(station.x_start_m, "length", self._unit_preset),
-                    _fmt_quantity(station.x_end_m, "length", self._unit_preset),
-                    _fmt_quantity(station.x_mid_m, "length", self._unit_preset),
-                    _fmt_quantity(station.r_inner_m, "length", self._unit_preset),
-                    _fmt_quantity(station.r_outer_m, "length", self._unit_preset),
-                    _fmt_quantity(station.r_mean_m, "length", self._unit_preset),
-                    _fmt_quantity(station.area_gas_m2, "area", self._unit_preset),
-                    _fmt_quantity(station.area_hot_m2, "area", self._unit_preset),
-                    _fmt_quantity(station.area_annulus_m2, "area", self._unit_preset),
-                    _fmt_quantity(station.hydraulic_diameter_m, "length", self._unit_preset),
+                    _station_main_status_label(station),
+                    station.region_label or "--",
+                    station.coolant_path_index if station.coolant_path_index is not None else station.station_index,
+                    _fmt_quantity(station.x_ref_m, "length", self._unit_preset),
+                    _fmt_quantity(station.r_ref_m, "length", self._unit_preset),
+                    _fmt_dimensionless(station.eps_ref),
                     _fmt_quantity(station.recovery_temperature_k, "temperature", self._unit_preset),
+                    _fmt_quantity(station.coolant_temperature_bulk_k, "temperature", self._unit_preset),
                     _fmt_quantity(station.h_g_w_per_m2_k, "heat_transfer_coefficient", self._unit_preset),
                     _fmt_quantity(station.h_c_w_per_m2_k, "heat_transfer_coefficient", self._unit_preset),
-                    _format_power(station.q_station_w),
-                    _fmt_quantity(station.q_hot_w_per_m2, "heat_flux", self._unit_preset),
-                    _fmt_quantity(station.coolant_temperature_in_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.coolant_temperature_bulk_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.coolant_temperature_out_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.wall_temperature_hot_gas_side_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.wall_temperature_coolant_side_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.wall_delta_t_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.required_pressure_in_pa, "pressure", self._unit_preset),
-                    _fmt_quantity(station.required_pressure_out_pa, "pressure", self._unit_preset),
-                    _fmt_quantity(station.pressure_drop_station_pa, "pressure", self._unit_preset),
-                    _fmt_dimensionless(station.reynolds_coolant),
                     _fmt_dimensionless(station.nusselt_coolant),
-                    _fmt_dimensionless(station.friction_factor),
-                    _fmt_quantity(station.thermal_margin_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.wall_mean_temperature_k, "temperature", self._unit_preset),
-                    _fmt_quantity(station.pressure_delta_pa, "pressure", self._unit_preset),
-                    _fmt_quantity(station.hoop_stress_pa, "stress", self._unit_preset),
-                    _fmt_quantity(station.longitudinal_stress_pa, "stress", self._unit_preset),
-                    _fmt_dimensionless(station.thermal_strain),
-                    _fmt_quantity(station.thermal_stress_pa, "stress", self._unit_preset),
-                    _fmt_quantity(station.equivalent_von_mises_stress_pa, "stress", self._unit_preset),
-                    _fmt_quantity(station.material_yield_strength_pa, "stress", self._unit_preset),
-                    _fmt_dimensionless(station.material_strength_margin),
-                    _fmt_dimensionless(station.total_screening_strain),
-                    station.material_margin_status or "--",
-                    _fmt_quantity(station.closeout_thickness_m, "length", self._unit_preset),
-                    _fmt_quantity(station.closeout_hoop_stress_pa, "stress", self._unit_preset),
-                    _fmt_dimensionless(station.closeout_material_strength_margin),
-                    station.status_summary,
+                    _fmt_dimensionless(station.reynolds_coolant),
+                    _fmt_dimensionless(station.coolant_prandtl_number),
+                    _fmt_quantity(station.wall_temperature_coolant_side_k, "temperature", self._unit_preset),
+                    _fmt_quantity(station.wall_temperature_hot_gas_side_k, "temperature", self._unit_preset),
+                    _fmt_quantity(station.q_hot_w_per_m2, "heat_flux", self._unit_preset),
+                    _fmt_quantity(station.pressure_drop_station_pa, "pressure", self._unit_preset),
                     station.warning_summary,
                 ),
             )
+            self._stations_by_item_id[item_id] = station
+        children = self._tree.get_children()
+        if children:
+            self._tree.selection_set(children[0])
+            self._tree.focus(children[0])
+            self._update_detail_view(self._stations_by_item_id[children[0]])
+
+    def _handle_selection_changed(self, _event: object) -> None:
+        selection = self._tree.selection()
+        if not selection:
+            return
+        station = self._stations_by_item_id.get(selection[0])
+        if station is None:
+            return
+        self._update_detail_view(station)
+
+    def _update_detail_view(self, station: ThermalStationResult) -> None:
+        detail_groups = _build_station_detail_groups(station, self._unit_preset)
+        for key, value in detail_groups.items():
+            if key in self._detail_vars:
+                self._detail_vars[key].set(value)
 
 
 class ThermalPlotWindow(tk.Toplevel):
@@ -1834,6 +1999,7 @@ class ThermalAnalysisPage(ttk.Frame):
         inputs = ThermalAnalysisInputs(
             coolant_mass_flow_kg_per_s=partial_inputs["coolant_mass_flow_kg_per_s"],
             coolant_type=self._cached_inputs.coolant_type if self._cached_inputs is not None else "RP-1",
+            primary_coolant_nusselt_method=partial_inputs["primary_coolant_nusselt_method"],
             model_type=partial_inputs["model_type"],
             coolant_inlet_temperature_k=float(partial_inputs["coolant_inlet_temperature_k"]),
             annulus_gap_m=float(partial_inputs["annulus_gap_m"]),
@@ -1902,6 +2068,150 @@ class ThermalAnalysisPage(ttk.Frame):
         self._plot_window = ThermalPlotWindow(self, unit_preset=self._unit_preset)
         self._plot_window.transient(self.winfo_toplevel())
         self._plot_window.set_result(self._current_result)
+
+
+def _station_main_status_label(station: ThermalStationResult) -> str:
+    """Collapse the station state into one quick engineering severity label."""
+
+    if (
+        station.material_margin_status == "exceeded"
+        or (station.thermal_margin_k is not None and station.thermal_margin_k < 0.0)
+    ):
+        return "Invalid"
+    if station.converged is False or station.warning_summary not in {"", "--"}:
+        return "Warning"
+    return "OK"
+
+
+def _build_station_detail_groups(
+    station: ThermalStationResult,
+    unit_preset: UnitPreset,
+) -> dict[str, str]:
+    """Return grouped station-detail text blocks for the compact UI."""
+
+    delta_t_c = None
+    if station.coolant_temperature_in_k is not None and station.coolant_temperature_out_k is not None:
+        delta_t_c = station.coolant_temperature_out_k - station.coolant_temperature_in_k
+    geometry_lines = [
+        f"Region: {station.region_label or '--'}",
+        f"Engine station index: {station.engine_station_index if station.engine_station_index is not None else '--'}",
+        f"Coolant path index: {station.coolant_path_index if station.coolant_path_index is not None else '--'}",
+        f"Reference point: {station.station_reference_label or '--'}",
+        f"Reference reason: {station.station_reference_reason or '--'}",
+        _detail_line("x_start", station.x_start_m, "length", unit_preset),
+        _detail_line("x_ref", station.x_ref_m, "length", unit_preset),
+        _detail_line("x_end", station.x_end_m, "length", unit_preset),
+        _detail_line("r_start", station.r_start_m, "length", unit_preset),
+        _detail_line("r_mid", station.r_mid_m, "length", unit_preset),
+        _detail_line("r_ref", station.r_ref_m, "length", unit_preset),
+        _detail_line("r_end", station.r_end_m, "length", unit_preset),
+        _detail_line("eps_start", station.eps_start, None, unit_preset),
+        _detail_line("eps_mid", station.eps_mid, None, unit_preset),
+        _detail_line("eps_ref", station.eps_ref, None, unit_preset),
+        _detail_line("eps_end", station.eps_end, None, unit_preset),
+        _detail_line("A_ref", station.area_ref_m2, "area", unit_preset),
+        _detail_line("A_hot", station.area_hot_m2, "area", unit_preset),
+        _detail_line("A_annulus", station.area_annulus_m2, "area", unit_preset),
+        _detail_line("D_h", station.hydraulic_diameter_m, "length", unit_preset),
+    ]
+    gas_coolant_lines = [
+        _detail_line("T_aw", station.recovery_temperature_k, "temperature", unit_preset),
+        _detail_line("h_g", station.h_g_w_per_m2_k, "heat_transfer_coefficient", unit_preset),
+        _detail_line("h_c", station.h_c_w_per_m2_k, "heat_transfer_coefficient", unit_preset),
+        _detail_line("cp_c", station.coolant_cp_j_per_kg_k, "specific_heat", unit_preset),
+        _detail_line("mu_b", station.coolant_viscosity_pa_s, "viscosity", unit_preset),
+        _detail_line("mu_w", station.coolant_wall_viscosity_pa_s, "viscosity", unit_preset),
+        _detail_line("gas emissivity", station.gas_effective_emissivity, None, unit_preset),
+        _detail_line("wall emissivity", station.wall_emissivity, None, unit_preset),
+        _detail_line("optical path", station.optical_path_length_m, "length", unit_preset),
+        f"Radiation note: {station.radiation_model_note or '--'}",
+        f"Participating species: {station.participating_species_used or '--'}",
+    ]
+    temperature_lines = [
+        _detail_line("T_aw", station.recovery_temperature_k, "temperature", unit_preset),
+        _detail_line("T_b,c", station.coolant_temperature_bulk_k, "temperature", unit_preset),
+        _detail_line("T_c,in", station.coolant_temperature_in_k, "temperature", unit_preset),
+        _detail_line("T_c,out", station.coolant_temperature_out_k, "temperature", unit_preset),
+        _detail_line("T_wc", station.wall_temperature_coolant_side_k, "temperature", unit_preset),
+        _detail_line("T_wg", station.wall_temperature_hot_gas_side_k, "temperature", unit_preset),
+        _detail_line("Delta_T_wall", station.wall_delta_t_k, "temperature", unit_preset),
+        _detail_line("T_rad", station.radiation_temperature_k, "temperature", unit_preset),
+        _detail_line("thermal margin", station.thermal_margin_k, "temperature", unit_preset),
+        _detail_line("Delta_T_c", delta_t_c, "temperature", unit_preset),
+    ]
+    dimensionless_lines = [
+        f"Solver scheme: {station.solver_scheme_label or '--'}",
+        f"Conductance rule: {station.conductance_rule_label or '--'}",
+        f"G_g: {_fmt_conductance(station.gas_conductance_w_per_k)}",
+        f"G_c: {_fmt_conductance(station.coolant_conductance_w_per_k)}",
+        f"R_g: {_fmt_thermal_resistance(station.gas_resistance_k_per_w)}",
+        f"R_wall: {_fmt_thermal_resistance(station.wall_resistance_k_per_w)}",
+        f"R_c: {_fmt_thermal_resistance(station.coolant_resistance_k_per_w)}",
+        _detail_line("A_flow", station.coolant_flow_area_m2, "area", unit_preset),
+        _detail_line("A_hot", station.area_hot_m2, "area", unit_preset),
+        _detail_line("A_cool", station.coolant_wall_area_m2, "area", unit_preset),
+        _detail_line("Re_c", station.reynolds_coolant, None, unit_preset),
+        _detail_line("Pr_c", station.coolant_prandtl_number, None, unit_preset),
+        _detail_line("Nu_c", station.nusselt_coolant, None, unit_preset),
+        f"Nu method: {station.nusselt_coolant_method or '--'}",
+        _detail_line("Nu_DB", station.nusselt_dittus_boelter, None, unit_preset),
+        _detail_line("Nu_ST", station.nusselt_sieder_tate, None, unit_preset),
+        _detail_line("Nu_Gnielinski", station.nusselt_gnielinski, None, unit_preset),
+        _detail_line("Nu spread", station.nusselt_spread_fraction, None, unit_preset),
+        _detail_line("f_Darcy", station.friction_factor, None, unit_preset),
+        _detail_line("mu_b / mu_w", station.sieder_tate_viscosity_ratio, None, unit_preset),
+        _detail_line("Sieder-Tate factor", station.sieder_tate_correction_factor, None, unit_preset),
+    ]
+    pressure_lines = [
+        _detail_line("p_required_in", station.required_pressure_in_pa, "pressure", unit_preset),
+        _detail_line("p_required_out", station.required_pressure_out_pa, "pressure", unit_preset),
+        _detail_line("Delta_p_station", station.pressure_drop_station_pa, "pressure", unit_preset),
+        _detail_line("Delta_p_wall", station.pressure_delta_pa, "pressure", unit_preset),
+    ]
+    mechanical_lines = [
+        _detail_line("T_wall_mean", station.wall_mean_temperature_k, "temperature", unit_preset),
+        _detail_line("sigma_hoop", station.hoop_stress_pa, "stress", unit_preset),
+        _detail_line("sigma_longitudinal", station.longitudinal_stress_pa, "stress", unit_preset),
+        _detail_line("epsilon_thermal", station.thermal_strain, None, unit_preset),
+        _detail_line("sigma_thermal", station.thermal_stress_pa, "stress", unit_preset),
+        _detail_line("sigma_vm", station.equivalent_von_mises_stress_pa, "stress", unit_preset),
+        _detail_line("yield_strength", station.material_yield_strength_pa, "stress", unit_preset),
+        _detail_line("material margin", station.material_strength_margin, None, unit_preset),
+        _detail_line("epsilon_total", station.total_screening_strain, None, unit_preset),
+        f"Margin status: {station.material_margin_status or '--'}",
+        _detail_line("closeout thickness", station.closeout_thickness_m, "length", unit_preset),
+        _detail_line("closeout hoop stress", station.closeout_hoop_stress_pa, "stress", unit_preset),
+        _detail_line("closeout margin", station.closeout_material_strength_margin, None, unit_preset),
+    ]
+    solver_notes_lines = [
+        f"Converged: {'yes' if station.converged else 'no'}",
+        f"Iterations: {station.iterations if station.iterations is not None else '--'}",
+        _detail_line("Residual", station.residual_k, "temperature", unit_preset),
+        f"Status: {station.status_summary or 'ok'}",
+        f"Warnings: {station.warning_summary or '--'}",
+        "All notes:",
+        *(f"- {note}" for note in (station.status_notes + station.warning_notes)),
+    ]
+    return {
+        "geometry": "\n".join(geometry_lines),
+        "gas_coolant": "\n".join(gas_coolant_lines),
+        "temperatures": "\n".join(temperature_lines),
+        "dimensionless": "\n".join(dimensionless_lines),
+        "pressure": "\n".join(pressure_lines),
+        "mechanical": "\n".join(mechanical_lines),
+        "solver_notes": "\n".join(solver_notes_lines),
+    }
+
+
+def _detail_line(
+    label: str,
+    value: float | None,
+    quantity: str | None,
+    unit_preset: UnitPreset,
+) -> str:
+    if quantity is None:
+        return f"{label}: {_fmt_dimensionless(value)}"
+    return f"{label}: {_fmt_quantity(value, quantity, unit_preset)}"
 
 
 def _parse_required_float(raw_value: str, label: str, errors: list[str]) -> float:
@@ -1977,6 +2287,24 @@ def _fmt_dimensionless(value: float | None) -> str:
     if abs(value) >= 1.0e4:
         return f"{value:.3e}"
     return f"{value:.4f}"
+
+
+def _fmt_conductance(value: float | None) -> str:
+    if value is None:
+        return "--"
+    if abs(value) >= 1.0e6:
+        return f"{value / 1.0e6:.3f} MW/K"
+    if abs(value) >= 1.0e3:
+        return f"{value / 1.0e3:.3f} kW/K"
+    return f"{value:.3f} W/K"
+
+
+def _fmt_thermal_resistance(value: float | None) -> str:
+    if value is None:
+        return "--"
+    if abs(value) < 1.0e-3:
+        return f"{value * 1.0e6:.3f} mK/W"
+    return f"{value:.6f} K/W"
 
 
 def _plot_series_values(

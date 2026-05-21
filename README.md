@@ -154,7 +154,7 @@ The current GUI is organized into these tabs:
    - annulus-cooling MVP reference model
    - read-only committed design context
    - optional radiation screening controls
-   - solver settings
+   - solver-owned station integration settings
    - table-based coolant / material properties
    - pressure reconstruction for pump-fed predesign
    - station result table with thermal and preliminary mechanical screening values
@@ -207,6 +207,7 @@ What it does:
 - uses the committed Current Design contour / geometry state
 - builds stations along the inner wall
 - applies an annulus-cooling reference model
+- evaluates each station with solver-owned conductance integration based on `G = hA`
 - computes station-wise coolant temperature rise, wall temperatures, heat pickup
   and cooling-side pressure drop
 - reconstructs required cooling inlet pressure and required pump discharge
@@ -218,7 +219,12 @@ What it currently shows:
 
 - read-only design context
 - annulus gap, roughness, flow direction and pressure assumptions
-- solver settings
+- solver selection only:
+  - `Forward Euler`
+  - `Backward Euler`
+  - `Crank-Nicolson / Trapezoidal`
+  - `NTU / exponential station model`
+  - `Simpson conductance averaging`
 - optional radiation and participating-media screening controls
 - station result table
 - separate plot window with selectable `x` / `y` quantities
@@ -230,6 +236,10 @@ Important current assumptions:
 - detailed channel cooling is planned for a later version
 - spacer ribs are shown only as a mechanical assumption and are not included in
   the MVP calculation
+- `A_flow` is used for coolant velocity, `Re_c` and pressure drop
+- `A_hot` and `A_cool` are used for gas-side and coolant-side conductance terms
+- `T_b,c` is a solved station bulk state, not a user-selected reference input
+- `Nu_c` is not averaged on its own; the solver aggregates conductance `G = hA`
 - cooling-side correlations assume fully developed annular flow
 - material and strength data are screening-level predesign data, not qualified allowables
 - preliminary mechanical screening is not FEM and not a structural qualification

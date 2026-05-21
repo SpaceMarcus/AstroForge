@@ -1,5 +1,7 @@
 """Tests for the annulus-cooling thermal-analysis reference model."""
 
+import pytest
+
 from engine.gui.thermal_analysis_page import (
     _THERMAL_PLOT_FIELDS,
     _build_plot_export_rows,
@@ -16,18 +18,27 @@ from engine.models import (
     ThermochemistryState,
 )
 from engine.thermal_analysis import (
+    _build_station_samples_for_flow_direction,
     _compute_station_mechanical_screening,
+    _coolant_nusselt_correlations,
+    _resolve_coolant_bulk_temperature_reference,
+    _resolve_station_evaluation_point,
     BartzThroatCurvatureMode,
+    CoolantBulkTemperatureReference,
+    CoolantNusseltMethod,
     CoolingFlowDirection,
     ParticipatingSpeciesMode,
     PressureCalculationMode,
     RadiationModelType,
     RadiationSettings,
+    SolverSettings,
+    StationEvaluationPoint,
     StationDistributionMode,
     ThermalAnalysisInputs,
     ThermalModelType,
     ThermalSolverType,
     default_thermal_analysis_inputs,
+    thermal_scenario_from_inputs,
     run_thermal_analysis,
 )
 from engine.unit_system import UnitPreset
@@ -125,6 +136,111 @@ def test_default_thermal_inputs_seed_from_fuel_flow() -> None:
     assert thermal_inputs.coolant_mass_flow_kg_per_s > 0.0
     assert thermal_inputs.coolant_inlet_temperature_k == 293.15
     assert thermal_inputs.solver_settings.station_tolerance == 0.1
+    assert thermal_inputs.primary_coolant_nusselt_method is CoolantNusseltMethod.GNIELINSKI
+
+
+def test_solver_default_reference_resolution_matches_solver_type() -> None:
+    forward_settings = SolverSettings(solver_type=ThermalSolverType.FORWARD_EULER)
+    backward_settings = SolverSettings(solver_type=ThermalSolverType.BACKWARD_EULER)
+    simpson_settings = SolverSettings(solver_type=ThermalSolverType.SIMPSON_CONDUCTANCE)
+    ntu_settings = SolverSettings(solver_type=ThermalSolverType.NTU_EXPONENTIAL)
+
+    assert _resolve_station_evaluation_point(forward_settings) is StationEvaluationPoint.COOLANT_UPSTREAM
+    assert _resolve_station_evaluation_point(backward_settings) is StationEvaluationPoint.COOLANT_DOWNSTREAM
+    assert _resolve_station_evaluation_point(simpson_settings) is StationEvaluationPoint.MIDPOINT
+    assert _resolve_station_evaluation_point(ntu_settings) is StationEvaluationPoint.MIDPOINT
+    assert _resolve_coolant_bulk_temperature_reference(forward_settings) is CoolantBulkTemperatureReference.COOLANT_INLET
+    assert _resolve_coolant_bulk_temperature_reference(backward_settings) is CoolantBulkTemperatureReference.COOLANT_OUTLET
+    assert _resolve_coolant_bulk_temperature_reference(simpson_settings) is CoolantBulkTemperatureReference.ITERATED_MEAN
+    assert _resolve_coolant_bulk_temperature_reference(ntu_settings) is CoolantBulkTemperatureReference.ITERATED_MEAN
+
+
+def test_station_reference_uses_coolant_upstream_side_for_nozzle_to_injector_flow() -> None:
+    bundle = _make_bundle()
+    solver_settings = SolverSettings(
+        solver_type=ThermalSolverType.FORWARD_EULER,
+        station_count=4,
+    )
+
+    samples = _build_station_samples_for_flow_direction(
+        bundle,
+        solver_settings,
+        CoolingFlowDirection.NOZZLE_TO_INJECTOR,
+    )
+
+    first_engine_sample = samples[0]
+    assert first_engine_sample.reference_label == "coolant upstream"
+    assert first_engine_sample.x_ref_m == first_engine_sample.x_end_m
+    assert first_engine_sample.radius_ref_m == first_engine_sample.radius_end_m
+
+
+def test_default_thermal_solve_uses_gnielinski_but_keeps_background_nu_methods() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(
+        coolant_mass_flow_kg_per_s=9.5,
+        coolant_type="RP-1",
+    )
+
+    result = run_thermal_analysis(bundle, thermal_inputs)
+    first_station = result.stations[0]
+
+    assert first_station.nusselt_coolant_method == CoolantNusseltMethod.GNIELINSKI.value
+    assert first_station.nusselt_gnielinski is not None
+    assert first_station.nusselt_dittus_boelter is not None
+    assert first_station.h_c_gnielinski_w_per_m2_k is not None
+    assert result.summary.primary_coolant_nusselt_method == CoolantNusseltMethod.GNIELINSKI.value
+    assert result.summary.nusselt_comparison_enabled is True
+
+
+def test_selected_primary_nusselt_method_changes_heat_balance_selection_only() -> None:
+    bundle = _make_bundle()
+    db_inputs = ThermalAnalysisInputs(
+        coolant_mass_flow_kg_per_s=9.5,
+        coolant_type="RP-1",
+        primary_coolant_nusselt_method=CoolantNusseltMethod.DITTUS_BOELTER,
+    )
+
+    result = run_thermal_analysis(bundle, db_inputs)
+    first_station = result.stations[0]
+
+    assert first_station.nusselt_coolant_method == CoolantNusseltMethod.DITTUS_BOELTER.value
+    assert first_station.nusselt_coolant == first_station.nusselt_dittus_boelter
+    assert first_station.nusselt_gnielinski is not None
+    assert first_station.nusselt_sieder_tate is not None
+
+
+def test_sieder_tate_missing_wall_viscosity_falls_back_cleanly() -> None:
+    result = _coolant_nusselt_correlations(
+        reynolds_number=25_000.0,
+        prandtl_number=2.0,
+        friction_factor=0.03,
+        mu_bulk_pa_s=1.0e-3,
+        mu_wall_pa_s=None,
+        method=CoolantNusseltMethod.SIEDER_TATE,
+    )
+
+    assert result.selected_method is CoolantNusseltMethod.GNIELINSKI
+    assert result.sieder_tate is None
+    assert any("wall viscosity missing for Sieder-Tate" in note for note in result.notes)
+
+
+def test_thermal_scenario_summary_keeps_global_boundary_and_mechanism_story() -> None:
+    thermal_inputs = ThermalAnalysisInputs(
+        coolant_mass_flow_kg_per_s=9.5,
+        coolant_type="RP-1",
+        primary_coolant_nusselt_method=CoolantNusseltMethod.SIEDER_TATE,
+    )
+
+    scenario = thermal_scenario_from_inputs(thermal_inputs)
+
+    assert scenario.name == "Annulus baseline"
+    assert scenario.coolant_circuit.passes[0].direction is CoolingFlowDirection.NOZZLE_TO_INJECTOR
+    assert scenario.solver_plan.run_parallel_nusselt_comparison is True
+    assert any(
+        mechanism.settings.get("primary_nusselt_method") == CoolantNusseltMethod.SIEDER_TATE.value
+        for mechanism in scenario.mechanisms
+        if mechanism.mechanism_type.value == "coolant-convection"
+    )
 
 
 def test_run_thermal_analysis_returns_station_results_and_summary() -> None:
@@ -151,15 +267,66 @@ def test_run_thermal_analysis_returns_station_results_and_summary() -> None:
     assert result.stations[0].warning_summary != ""
     assert result.stations[0].coolant_cp_j_per_kg_k is not None
     assert result.stations[0].coolant_viscosity_pa_s is not None
+    assert result.stations[0].coolant_prandtl_number is not None
     assert result.stations[0].wall_mean_temperature_k is not None
     assert result.stations[0].hoop_stress_pa is not None
     assert result.stations[0].equivalent_von_mises_stress_pa is not None
     assert result.stations[0].material_margin_status is not None
     assert result.stations[0].total_screening_strain is not None
+    assert result.stations[0].station_reference_label is not None
+    assert result.stations[0].coolant_bulk_temperature_reference_label is not None
+    assert result.stations[0].solver_scheme_label is not None
+    assert result.stations[0].conductance_rule_label is not None
+    assert result.stations[0].gas_conductance_w_per_k is not None
+    assert result.stations[0].coolant_conductance_w_per_k is not None
+    assert result.stations[0].coolant_flow_area_m2 is not None
+    assert result.stations[0].coolant_wall_area_m2 is not None
     assert result.summary.coolant_property_source == "table"
     assert result.summary.material_property_source == "screening-table"
     assert result.summary.max_von_mises_stress_pa is not None
     assert result.summary.max_total_screening_strain is not None
+
+
+def test_forward_euler_uses_coolant_inlet_as_tb_reference() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(
+        coolant_mass_flow_kg_per_s=9.5,
+        coolant_type="RP-1",
+        solver_settings=SolverSettings(
+            solver_type=ThermalSolverType.FORWARD_EULER,
+            station_distribution_mode=StationDistributionMode.MANUAL,
+            station_count=6,
+        ),
+    )
+
+    result = run_thermal_analysis(bundle, thermal_inputs)
+    first_station = result.stations[0]
+
+    assert first_station.coolant_bulk_temperature_reference_label == "coolant inlet"
+    assert first_station.coolant_temperature_bulk_k == pytest.approx(first_station.coolant_temperature_in_k)
+
+
+def test_simpson_solver_reports_conductance_averaging_and_solved_bulk_state() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(
+        coolant_mass_flow_kg_per_s=9.5,
+        coolant_type="RP-1",
+        solver_settings=SolverSettings(
+            solver_type=ThermalSolverType.SIMPSON_CONDUCTANCE,
+            station_distribution_mode=StationDistributionMode.MANUAL,
+            station_count=6,
+        ),
+    )
+
+    result = run_thermal_analysis(bundle, thermal_inputs)
+    first_station = result.stations[0]
+
+    assert first_station.solver_scheme_label == "Simpson conductance averaging"
+    assert first_station.conductance_rule_label == "Simpson area-conductance averaging"
+    assert first_station.coolant_temperature_bulk_k is not None
+    assert first_station.coolant_temperature_in_k is not None
+    assert first_station.coolant_temperature_out_k is not None
+    assert first_station.coolant_temperature_in_k < first_station.coolant_temperature_bulk_k < first_station.coolant_temperature_out_k
 
 
 def test_run_thermal_analysis_computes_closeout_screening_when_enabled() -> None:

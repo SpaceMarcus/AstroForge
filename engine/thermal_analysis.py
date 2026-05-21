@@ -33,6 +33,7 @@ _DEFAULT_ROUGHNESS_M = 15.0e-6
 _DEFAULT_COOLANT_INLET_TEMPERATURE_K = 293.15
 _COOLANT_LAMINAR_RE_MAX = 2_300.0
 _COOLANT_TURBULENT_RE_MIN = 10_000.0
+_GNIELINSKI_RE_MIN = 3_000.0
 _SMALL_DELTA_K = 1.0e-6
 _MECHANICAL_REFERENCE_TEMPERATURE_K = 293.15
 _HIGH_SCREENING_STRAIN_LIMIT = 3.0e-3
@@ -75,6 +76,15 @@ class ThermalSolverType(str, Enum):
     BACKWARD_EULER = "backward-euler"
     CRANK_NICOLSON = "crank-nicolson"
     NTU_EXPONENTIAL = "ntu-exponential"
+    SIMPSON_CONDUCTANCE = "simpson-conductance"
+
+
+class CoolantNusseltMethod(str, Enum):
+    """Primary coolant-side Nu_c choices for the annulus MVP."""
+
+    DITTUS_BOELTER = "dittus-boelter"
+    SIEDER_TATE = "sieder-tate"
+    GNIELINSKI = "gnielinski"
 
 
 class StationDistributionMode(str, Enum):
@@ -82,6 +92,26 @@ class StationDistributionMode(str, Enum):
 
     MANUAL = "manual"
     CEA_PROFILE = "cea-profile"
+
+
+class StationEvaluationPoint(str, Enum):
+    """Where local geometry and gas-side station values are evaluated."""
+
+    SOLVER_DEFAULT = "solver-default"
+    COOLANT_UPSTREAM = "coolant-upstream"
+    MIDPOINT = "midpoint"
+    COOLANT_DOWNSTREAM = "coolant-downstream"
+    TRAPEZOIDAL = "trapezoidal"
+
+
+class CoolantBulkTemperatureReference(str, Enum):
+    """Which coolant temperature definition is used for local property lookup."""
+
+    SOLVER_DEFAULT = "solver-default"
+    COOLANT_INLET = "coolant-inlet"
+    COOLANT_OUTLET = "coolant-outlet"
+    STATION_MEAN = "station-mean"
+    ITERATED_MEAN = "iterated-mean"
 
 
 class PressureCalculationMode(str, Enum):
@@ -138,6 +168,48 @@ class OpticalPathLengthMode(str, Enum):
     MEAN_BEAM_LENGTH_PLACEHOLDER = "mean-beam-length-placeholder"
 
 
+class StationSelectorType(str, Enum):
+    """Selector types for future station-range-based thermal conditions."""
+
+    FULL_CONTOUR = "full-contour"
+    X_VALUE = "x-value"
+    AREA_RATIO = "area-ratio"
+    STATION_INDEX = "station-index"
+    REGION = "region"
+    MARKER = "marker"
+
+
+class ThermalConditionType(str, Enum):
+    """Range and event placeholders for later thermal-scenario expansion."""
+
+    COOLING_ACTIVE_RANGE = "cooling-active-range"
+    FLOW_DIRECTION_CHANGE = "flow-direction-change"
+    RADIATION_ACTIVE_RANGE = "radiation-active-range"
+    FILM_COOLING_PLACEHOLDER = "film-cooling-placeholder"
+    LOCAL_ROUGHNESS_OVERRIDE = "local-roughness-override"
+    LOCAL_WALL_THICKNESS_OVERRIDE = "local-wall-thickness-override"
+    PRESSURE_LOSS_ELEMENT = "pressure-loss-element"
+
+
+class ThermalMechanismType(str, Enum):
+    """Heat-transfer mechanisms that can later be switched per station range."""
+
+    HOT_GAS_CONVECTION = "hot-gas-convection"
+    COOLANT_CONVECTION = "coolant-convection"
+    WALL_CONDUCTION = "wall-conduction"
+    RADIATION = "radiation"
+    FILM_COOLING_FUTURE = "film-cooling-future"
+    CHANNEL_RIB_NETWORK_FUTURE = "channel-rib-network-future"
+
+
+class SolverExecutionMode(str, Enum):
+    """Execution-plan modes for the modular thermal scenario skeleton."""
+
+    SINGLE_RUN = "single-run"
+    PARALLEL_COMPARISON = "parallel-comparison"
+    SEQUENTIAL_PIPELINE = "sequential-pipeline"
+
+
 @dataclass(slots=True)
 class RadiationSettings:
     """Optional hot-gas-side radiation settings for the annulus MVP.
@@ -183,6 +255,7 @@ class ThermalAnalysisInputs:
 
     coolant_mass_flow_kg_per_s: float | None = None
     coolant_type: str = "RP-1"
+    primary_coolant_nusselt_method: CoolantNusseltMethod = CoolantNusseltMethod.GNIELINSKI
     model_type: ThermalModelType = ThermalModelType.ANNULUS
     coolant_inlet_temperature_k: float = 293.15
     annulus_gap_m: float = _DEFAULT_ANNULUS_GAP_M
@@ -198,6 +271,92 @@ class ThermalAnalysisInputs:
 
 
 @dataclass(slots=True)
+class StationSelector:
+    """Selector placeholder for future range-based thermal conditions."""
+
+    selector_type: StationSelectorType
+    value: float | int | str | None = None
+
+
+@dataclass(slots=True)
+class ThermalCondition:
+    """Stored thermal condition for later range-aware solver extensions."""
+
+    condition_type: ThermalConditionType
+    start: StationSelector
+    end: StationSelector
+    enabled: bool = True
+    priority: int = 0
+    parameters: dict[str, object] = field(default_factory=dict)
+    note: str = ""
+
+
+@dataclass(slots=True)
+class ThermalMechanism:
+    """Mechanism toggle plus local settings for the modular scenario skeleton."""
+
+    mechanism_type: ThermalMechanismType
+    enabled: bool = True
+    start: StationSelector | None = None
+    end: StationSelector | None = None
+    settings: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CoolantPass:
+    """One coolant pass definition used to prebuild the thermal R-network path."""
+
+    name: str
+    start: StationSelector
+    end: StationSelector
+    direction: CoolingFlowDirection
+    mass_flow_fraction: float = 1.0
+    enabled: bool = True
+
+
+@dataclass(slots=True)
+class CoolantCircuit:
+    """Coolant-path skeleton for later multi-pass or split-flow extensions."""
+
+    name: str
+    passes: list[CoolantPass] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ThermalSolverPlan:
+    """Execution plan metadata for the modular scenario builder."""
+
+    execution_mode: SolverExecutionMode = SolverExecutionMode.SINGLE_RUN
+    run_parallel_nusselt_comparison: bool = True
+    run_parallel_pressure_modes: bool = False
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class ThermalScenario:
+    """Modular thermal-scenario skeleton wrapped around the MVP annulus solver."""
+
+    name: str = "Default Thermal Scenario"
+    global_conditions: ThermalAnalysisInputs = field(default_factory=ThermalAnalysisInputs)
+    coolant_circuit: CoolantCircuit = field(
+        default_factory=lambda: CoolantCircuit(
+            name="Single pass",
+            passes=[
+                CoolantPass(
+                    name="Pass 1",
+                    start=StationSelector(StationSelectorType.FULL_CONTOUR),
+                    end=StationSelector(StationSelectorType.FULL_CONTOUR),
+                    direction=CoolingFlowDirection.NOZZLE_TO_INJECTOR,
+                )
+            ],
+        )
+    )
+    mechanisms: list[ThermalMechanism] = field(default_factory=list)
+    conditions: list[ThermalCondition] = field(default_factory=list)
+    solver_plan: ThermalSolverPlan = field(default_factory=ThermalSolverPlan)
+
+
+@dataclass(slots=True)
 class AnnulusCoolingGeometry:
     """Local annulus geometry derived from the committed inner contour."""
 
@@ -208,6 +367,8 @@ class AnnulusCoolingGeometry:
     wetted_perimeter_m: float
     hydraulic_diameter_m: float
     hot_wall_area_m2: float
+    coolant_wall_area_m2: float
+    wall_mean_area_m2: float
 
 
 @dataclass(slots=True)
@@ -240,11 +401,20 @@ class ThermalStationResult:
     required_pressure_in_pa: float | None
     pressure_drop_station_pa: float | None
     reynolds_coolant: float | None
+    coolant_prandtl_number: float | None
     coolant_cp_j_per_kg_k: float | None
     coolant_viscosity_pa_s: float | None
     nusselt_coolant: float | None
-    friction_factor: float | None
-    thermal_margin_k: float | None
+    nusselt_coolant_method: str | None = None
+    nusselt_dittus_boelter: float | None = None
+    nusselt_sieder_tate: float | None = None
+    nusselt_gnielinski: float | None = None
+    nusselt_spread_fraction: float | None = None
+    friction_factor: float | None = None
+    h_c_dittus_boelter_w_per_m2_k: float | None = None
+    h_c_sieder_tate_w_per_m2_k: float | None = None
+    h_c_gnielinski_w_per_m2_k: float | None = None
+    thermal_margin_k: float | None = None
     wall_mean_temperature_k: float | None = None
     pressure_delta_pa: float | None = None
     pressure_hoop_stress_pa: float | None = None
@@ -289,6 +459,30 @@ class ThermalStationResult:
     radiation_model_note: str | None = None
     participating_species_mode: str | None = None
     participating_species_used: str | None = None
+    x_ref_m: float | None = None
+    r_ref_m: float | None = None
+    area_ref_m2: float | None = None
+    eps_ref: float | None = None
+    station_reference_label: str | None = None
+    station_reference_reason: str | None = None
+    x_engine_start_m: float | None = None
+    x_engine_end_m: float | None = None
+    x_engine_mid_m: float | None = None
+    r_start_m: float | None = None
+    r_mid_m: float | None = None
+    r_end_m: float | None = None
+    eps_start: float | None = None
+    eps_mid: float | None = None
+    eps_end: float | None = None
+    region_label: str | None = None
+    engine_station_index: int | None = None
+    coolant_path_index: int | None = None
+    coolant_pass_id: str | None = None
+    coolant_bulk_temperature_reference_label: str | None = None
+    coolant_bulk_temperature_reference_reason: str | None = None
+    coolant_wall_viscosity_pa_s: float | None = None
+    sieder_tate_viscosity_ratio: float | None = None
+    sieder_tate_correction_factor: float | None = None
     status_summary: str = "ok"
     warning_summary: str = "--"
     status: str = ""
@@ -297,6 +491,15 @@ class ThermalStationResult:
     iterations: int | None = None
     converged: bool | None = None
     residual_k: float | None = None
+    solver_scheme_label: str | None = None
+    conductance_rule_label: str | None = None
+    gas_conductance_w_per_k: float | None = None
+    coolant_conductance_w_per_k: float | None = None
+    gas_resistance_k_per_w: float | None = None
+    wall_resistance_k_per_w: float | None = None
+    coolant_resistance_k_per_w: float | None = None
+    coolant_flow_area_m2: float | None = None
+    coolant_wall_area_m2: float | None = None
 
 
 @dataclass(slots=True)
@@ -318,10 +521,20 @@ class ThermalAnalysisSummary:
     estimated_isp_gain_s: float | None
     estimated_isp_gain_note: str
     pressure_mode_note: str
+    thermal_scenario_name: str | None = None
+    primary_coolant_nusselt_method: str | None = None
+    nusselt_comparison_enabled: bool = True
+    active_mechanisms_summary: str | None = None
+    global_conditions_summary: str | None = None
+    station_condition_summary: str | None = None
     coolant_property_source: str | None = None
     material_property_source: str | None = None
     stations_with_property_warnings: int | None = None
     stations_outside_property_table_range: int | None = None
+    max_nusselt_spread_fraction: float | None = None
+    stations_with_large_nusselt_spread: int | None = None
+    stations_outside_nusselt_validity: int | None = None
+    stations_with_high_h_c: int | None = None
     total_radiation_heat_w: float | None = None
     max_radiation_heat_flux_w_per_m2: float | None = None
     radiation_fraction_of_total_heat: float | None = None
@@ -348,6 +561,24 @@ class ThermalAnalysisResult:
         "3 spacer ribs are treated as a mechanical support assumption only and are excluded from the MVP annulus calculation."
     )
     generated_at_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+@dataclass(slots=True)
+class _CoolantNusseltCorrelationResult:
+    """Selected plus comparison Nu_c values for one iteration-local coolant state."""
+
+    selected_method: CoolantNusseltMethod
+    selected_nusselt: float
+    dittus_boelter: float | None
+    sieder_tate: float | None
+    gnielinski: float | None
+    spread_fraction: float | None
+    regime_label: str
+    validity_note: str
+    sieder_tate_viscosity_ratio: float | None = None
+    sieder_tate_correction_factor: float | None = None
+    notes: tuple[str, ...] = ()
+
 
 @dataclass(slots=True)
 class _GasSideProperties:
@@ -380,7 +611,15 @@ class _CoolantTransportState:
     prandtl_number: float
     reynolds_number: float
     nusselt_number: float
+    nusselt_method: str
+    nusselt_dittus_boelter: float | None
+    nusselt_sieder_tate: float | None
+    nusselt_gnielinski: float | None
+    nusselt_spread_fraction: float | None
     h_c_w_per_m2_k: float
+    h_c_dittus_boelter_w_per_m2_k: float | None
+    h_c_sieder_tate_w_per_m2_k: float | None
+    h_c_gnielinski_w_per_m2_k: float | None
     friction_factor: float
     coolant_regime_label: str
     friction_regime_label: str
@@ -388,6 +627,11 @@ class _CoolantTransportState:
     pressure_drop_minor_pa: float
     pressure_drop_acceleration_pa: float
     pressure_drop_total_pa: float
+    bulk_temperature_reference_label: str
+    bulk_temperature_reference_reason: str
+    wall_viscosity_pa_s: float | None = None
+    sieder_tate_viscosity_ratio: float | None = None
+    sieder_tate_correction_factor: float | None = None
     notes: tuple[str, ...] = ()
 
 
@@ -397,6 +641,7 @@ class _StationHeatBalanceResult:
 
     h_g_w_per_m2_k: float
     h_c_w_per_m2_k: float
+    recovery_temperature_k: float
     coolant_temperature_out_k: float
     coolant_temperature_bulk_k: float
     q_station_w: float
@@ -408,6 +653,8 @@ class _StationHeatBalanceResult:
     wall_temperature_coolant_side_k: float
     wall_temperature_hot_gas_side_k: float
     wall_delta_t_k: float
+    coolant_bulk_temperature_reference_label: str
+    coolant_bulk_temperature_reference_reason: str
     radiation_temperature_k: float | None
     gas_effective_emissivity: float | None
     wall_emissivity: float | None
@@ -420,13 +667,120 @@ class _StationHeatBalanceResult:
     coolant_cp_j_per_kg_k: float
     coolant_viscosity_pa_s: float
     nusselt_coolant: float
+    nusselt_coolant_method: str
+    nusselt_dittus_boelter: float | None
+    nusselt_sieder_tate: float | None
+    nusselt_gnielinski: float | None
+    nusselt_spread_fraction: float | None
     friction_factor: float
+    h_c_dittus_boelter_w_per_m2_k: float | None
+    h_c_sieder_tate_w_per_m2_k: float | None
+    h_c_gnielinski_w_per_m2_k: float | None
+    coolant_wall_viscosity_pa_s: float | None
+    sieder_tate_viscosity_ratio: float | None
+    sieder_tate_correction_factor: float | None
+    gas_conductance_w_per_k: float
+    coolant_conductance_w_per_k: float
+    gas_resistance_k_per_w: float
+    wall_resistance_k_per_w: float
+    coolant_resistance_k_per_w: float
+    coolant_flow_area_m2: float
+    coolant_wall_area_m2: float
+    conductance_rule_label: str
+    solver_scheme_label: str
     pressure_drop_station_pa: float
     wall_material_properties: MaterialProperties
     iterations: int
     converged: bool
     residual_k: float
     status_notes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class _StationReferenceState:
+    """One explicit evaluation state inside a station segment."""
+
+    x_m: float
+    radius_m: float
+    area_m2: float
+    eps: float
+    profile_point: ThermochemistryProfilePoint | None
+
+
+@dataclass(slots=True)
+class _StationSubpoint:
+    """One geometric/gas-side evaluation point inside a station."""
+
+    name: str
+    x_m: float
+    radius_m: float
+    r_outer_m: float
+    r_mean_m: float
+    area_gas_m2: float
+    eps: float
+    coolant_flow_area_m2: float
+    hot_wall_area_m2: float
+    coolant_wall_area_m2: float
+    wall_mean_area_m2: float
+    hydraulic_diameter_m: float
+    profile_point: ThermochemistryProfilePoint | None
+
+
+@dataclass(slots=True)
+class _LocalClosureState:
+    """One local closure evaluation used by the station integration rule."""
+
+    subpoint: _StationSubpoint
+    gas_side_properties: _GasSideProperties
+    coolant_transport: _CoolantTransportState
+    h_g_w_per_m2_k: float
+    g_gas_w_per_k: float
+    g_coolant_w_per_k: float
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
+class _StationConductanceState:
+    """Aggregated conductance state owned by the selected station scheme."""
+
+    integration_scheme_label: str
+    conductance_rule_label: str
+    display_subpoint_name: str
+    x_display_m: float
+    radius_display_m: float
+    area_display_m2: float
+    eps_display: float
+    recovery_temperature_k: float
+    coolant_bulk_temperature_k: float
+    g_gas_w_per_k: float
+    g_coolant_w_per_k: float
+    h_g_station_w_per_m2_k: float
+    h_c_station_w_per_m2_k: float
+    nusselt_station: float
+    reynolds_station: float
+    prandtl_station: float
+    hot_area_station_m2: float
+    coolant_area_station_m2: float
+    flow_area_station_m2: float
+    wall_mean_area_station_m2: float
+    hydraulic_diameter_station_m: float
+    pressure_drop_station_pa: float
+    coolant_cp_j_per_kg_k: float
+    coolant_viscosity_pa_s: float
+    coolant_wall_viscosity_pa_s: float | None
+    nusselt_method: str
+    nusselt_dittus_boelter: float | None
+    nusselt_sieder_tate: float | None
+    nusselt_gnielinski: float | None
+    nusselt_spread_fraction: float | None
+    h_c_dittus_boelter_w_per_m2_k: float | None
+    h_c_sieder_tate_w_per_m2_k: float | None
+    h_c_gnielinski_w_per_m2_k: float | None
+    friction_factor: float
+    sieder_tate_viscosity_ratio: float | None
+    sieder_tate_correction_factor: float | None
+    representative_profile_point: ThermochemistryProfilePoint | None
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -488,12 +842,77 @@ class _MechanicalStationScreeningResult:
 @dataclass(slots=True)
 class _SamplePoint:
     x_start_m: float
+    radius_start_m: float
+    area_start_m2: float
+    eps_start: float
+    x_mid_m: float
+    radius_mid_m: float
+    area_mid_m2: float
+    eps_mid: float
     x_end_m: float
-    x_m: float
-    radius_m: float
-    area_m2: float
+    radius_end_m: float
+    area_end_m2: float
+    eps_end: float
+    x_ref_m: float
+    radius_ref_m: float
+    area_ref_m2: float
+    eps_ref: float
+    reference_label: str
+    reference_reason: str
+    profile_point_start: ThermochemistryProfilePoint | None
+    profile_point_mid: ThermochemistryProfilePoint | None
+    profile_point_end: ThermochemistryProfilePoint | None
+    profile_point_ref: ThermochemistryProfilePoint | None
     ds_m: float
-    profile_point: ThermochemistryProfilePoint | None
+    engine_station_index: int
+    coolant_path_index: int = 0
+    coolant_pass_id: str | None = None
+
+    @property
+    def x_m(self) -> float:
+        return self.x_ref_m
+
+    @property
+    def radius_m(self) -> float:
+        return self.radius_ref_m
+
+    @property
+    def area_m2(self) -> float:
+        return self.area_ref_m2
+
+    @property
+    def profile_point(self) -> ThermochemistryProfilePoint | None:
+        return self.profile_point_ref
+
+    @property
+    def region_label(self) -> str:
+        region = self.profile_point_ref.region if self.profile_point_ref is not None else ""
+        if region:
+            return region
+        if self.x_ref_m < 0.0:
+            return "chamber"
+        if math.isclose(self.x_ref_m, 0.0, abs_tol=1.0e-9):
+            return "throat"
+        return "nozzle"
+
+
+@dataclass(slots=True)
+class _ThermalPrecalculation:
+    """Shared thermal-model precalculation before the station-by-station solve.
+
+    This stage turns the selected coolant circuit and station grid into the
+    effective R-network path the later station solver marches over. Keeping it
+    explicit avoids hidden recomputation from stale setup fragments.
+    """
+
+    scenario: ThermalScenario
+    effective_inputs: ThermalAnalysisInputs
+    station_samples: list[_SamplePoint]
+    bundle_status_notes: tuple[str, ...]
+    wall_temperature_limit_k: float
+    wall_thickness_m: float
+    wall_material_id: str
+    reference_coolant_pressure_estimate_pa: float
 
 
 def default_thermal_analysis_inputs(
@@ -521,6 +940,100 @@ def default_thermal_analysis_inputs(
     )
 
 
+def default_thermal_scenario(
+    bundle: ExportBundle | None = None,
+    *,
+    fuel_name: str | None = None,
+) -> ThermalScenario:
+    """Return the default modular thermal scenario wrapped around the MVP solver."""
+
+    return thermal_scenario_from_inputs(
+        default_thermal_analysis_inputs(bundle, fuel_name=fuel_name),
+        name="Annulus baseline",
+    )
+
+
+def thermal_scenario_from_inputs(
+    thermal_inputs: ThermalAnalysisInputs,
+    *,
+    name: str = "Annulus baseline",
+) -> ThermalScenario:
+    """Wrap the current thermal input set in the modular scenario skeleton."""
+
+    full_contour_selector = StationSelector(StationSelectorType.FULL_CONTOUR)
+    coolant_pass = CoolantPass(
+        name="Pass 1",
+        start=full_contour_selector,
+        end=full_contour_selector,
+        direction=thermal_inputs.flow_direction,
+    )
+    mechanisms = [
+        ThermalMechanism(
+            mechanism_type=ThermalMechanismType.HOT_GAS_CONVECTION,
+            enabled=True,
+            settings={"model": "Bartz"},
+        ),
+        ThermalMechanism(
+            mechanism_type=ThermalMechanismType.COOLANT_CONVECTION,
+            enabled=True,
+            settings={
+                "primary_nusselt_method": thermal_inputs.primary_coolant_nusselt_method.value,
+                "background_comparison": True,
+            },
+        ),
+        ThermalMechanism(
+            mechanism_type=ThermalMechanismType.WALL_CONDUCTION,
+            enabled=True,
+        ),
+        ThermalMechanism(
+            mechanism_type=ThermalMechanismType.RADIATION,
+            enabled=thermal_inputs.radiation_settings.enabled,
+            settings={"model": thermal_inputs.radiation_settings.model.value},
+        ),
+        ThermalMechanism(
+            mechanism_type=ThermalMechanismType.FILM_COOLING_FUTURE,
+            enabled=False,
+            settings={"status": "planned"},
+        ),
+        ThermalMechanism(
+            mechanism_type=ThermalMechanismType.CHANNEL_RIB_NETWORK_FUTURE,
+            enabled=False,
+            settings={"status": "planned"},
+        ),
+    ]
+    conditions = [
+        ThermalCondition(
+            condition_type=ThermalConditionType.COOLING_ACTIVE_RANGE,
+            start=full_contour_selector,
+            end=full_contour_selector,
+            enabled=True,
+            note="MVP uses the full contour as the active cooling range.",
+        ),
+        ThermalCondition(
+            condition_type=ThermalConditionType.RADIATION_ACTIVE_RANGE,
+            start=full_contour_selector,
+            end=full_contour_selector,
+            enabled=thermal_inputs.radiation_settings.enabled,
+            note="Range-local radiation conditions are planned; MVP applies one global setting.",
+        ),
+    ]
+    return ThermalScenario(
+        name=name,
+        global_conditions=thermal_inputs,
+        coolant_circuit=CoolantCircuit(name="Single pass", passes=[coolant_pass]),
+        mechanisms=mechanisms,
+        conditions=conditions,
+        solver_plan=ThermalSolverPlan(
+            execution_mode=SolverExecutionMode.SINGLE_RUN,
+            run_parallel_nusselt_comparison=True,
+            run_parallel_pressure_modes=False,
+            notes=(
+                "Model precalculation builds the annulus resistance path from the active coolant circuit before the station solver runs.",
+            ),
+        ),
+    )
+
+
 def run_thermal_analysis(
     bundle: ExportBundle,
     thermal_inputs: ThermalAnalysisInputs,
@@ -533,53 +1046,68 @@ def run_thermal_analysis(
     can later serve as a baseline comparison for detailed regenerative cooling.
     """
 
-    _ensure_valid_thermal_inputs(bundle, thermal_inputs)
+    return run_thermal_scenario(bundle, thermal_scenario_from_inputs(thermal_inputs))
 
-    station_samples = _build_station_samples(bundle, thermal_inputs.solver_settings)
-    if thermal_inputs.flow_direction is CoolingFlowDirection.NOZZLE_TO_INJECTOR:
-        station_samples = list(reversed(station_samples))
-    bundle_status_notes = _bundle_status_notes(
-        bundle,
-        thermal_inputs.solver_settings,
-        station_sample_count=len(station_samples),
-    )
 
-    wall_temperature_limit_k = _wall_material_screening_limit_k(bundle.inputs.liner_material)
-    wall_thickness_m = _resolved_wall_thickness_m(bundle)
-    wall_material_id = bundle.inputs.liner_material
+def run_thermal_scenario(
+    bundle: ExportBundle,
+    scenario: ThermalScenario,
+) -> ThermalAnalysisResult:
+    """Run the active thermal scenario through the current annulus MVP backend."""
+
+    _ensure_valid_thermal_inputs(bundle, scenario.global_conditions)
+    return _run_annulus_baseline(bundle, scenario)
+
+
+def _run_annulus_baseline(
+    bundle: ExportBundle,
+    scenario: ThermalScenario,
+) -> ThermalAnalysisResult:
+    """Execute the current annulus baseline using the modular scenario shell."""
+
+    thermal_inputs = scenario.global_conditions
+    precalculation = _precalculate_thermal_model(bundle, scenario)
+    station_samples = precalculation.station_samples
+    bundle_status_notes = precalculation.bundle_status_notes
+    wall_temperature_limit_k = precalculation.wall_temperature_limit_k
+    wall_thickness_m = precalculation.wall_thickness_m
+    wall_material_id = precalculation.wall_material_id
 
     coolant_mass_flow = thermal_inputs.coolant_mass_flow_kg_per_s or 0.0
     coolant_temperature_in_k = thermal_inputs.coolant_inlet_temperature_k
     station_results: list[ThermalStationResult] = []
-    reference_coolant_pressure_estimate_pa = _reference_coolant_pressure_estimate_pa(bundle, thermal_inputs)
+    reference_coolant_pressure_estimate_pa = precalculation.reference_coolant_pressure_estimate_pa
 
     for station_index, sample in enumerate(station_samples):
         station_geometry = _build_annulus_geometry(sample, thermal_inputs.annulus_gap_m)
-        gas_side_properties, gas_temperature_source = _gas_side_properties(
+        _representative_gas_side_properties, gas_temperature_source = _gas_side_properties(
             bundle,
             sample,
             thermal_inputs.bartz_throat_curvature_mode,
         )
         station_solution = _solve_station_heat_balance(
-            bundle,
-            sample,
-            station_geometry,
-            gas_side_properties,
-            coolant_temperature_in_k,
-            thermal_inputs.coolant_type,
-            coolant_mass_flow,
-            reference_coolant_pressure_estimate_pa,
-            wall_thickness_m,
-            wall_material_id,
-            thermal_inputs.coolant_roughness_m,
-            thermal_inputs.solver_settings,
-            thermal_inputs.radiation_settings,
+            bundle=bundle,
+            sample=sample,
+            station_geometry=station_geometry,
+            flow_direction=thermal_inputs.flow_direction,
+            curvature_mode=thermal_inputs.bartz_throat_curvature_mode,
+            coolant_temperature_in_k=coolant_temperature_in_k,
+            coolant_type=thermal_inputs.coolant_type,
+            coolant_mass_flow_kg_per_s=coolant_mass_flow,
+            local_pressure_estimate_pa=reference_coolant_pressure_estimate_pa,
+            wall_thickness_m=wall_thickness_m,
+            wall_material_id=wall_material_id,
+            coolant_roughness_m=thermal_inputs.coolant_roughness_m,
+            primary_coolant_nusselt_method=thermal_inputs.primary_coolant_nusselt_method,
+            solver_settings=thermal_inputs.solver_settings,
+            radiation_settings=thermal_inputs.radiation_settings,
             previous_station_result=station_results[-1] if station_results else None,
         )
         thermal_margin_k = wall_temperature_limit_k - station_solution.wall_temperature_hot_gas_side_k
         status_messages = list(station_solution.status_notes)
         if station_index == 0:
             status_messages.extend(bundle_status_notes)
+        status_messages.append(f"station reference: {sample.reference_reason}")
         if gas_temperature_source != "adiabatic-wall":
             status_messages.append("gas-side recovery placeholder")
         if thermal_margin_k < 0.0:
@@ -591,15 +1119,15 @@ def run_thermal_analysis(
                 station_index=station_index,
                 x_start_m=sample.x_start_m,
                 x_end_m=sample.x_end_m,
-                x_mid_m=sample.x_m,
+                x_mid_m=sample.x_mid_m,
                 r_inner_m=station_geometry.r_inner_m,
                 r_outer_m=station_geometry.r_outer_m,
                 r_mean_m=station_geometry.r_mean_m,
-                area_gas_m2=sample.area_m2,
+                area_gas_m2=sample.area_ref_m2,
                 area_hot_m2=station_geometry.hot_wall_area_m2,
                 area_annulus_m2=station_geometry.area_annulus_m2,
                 hydraulic_diameter_m=station_geometry.hydraulic_diameter_m,
-                recovery_temperature_k=gas_side_properties.recovery_temperature_k,
+                recovery_temperature_k=station_solution.recovery_temperature_k,
                 h_g_w_per_m2_k=station_solution.h_g_w_per_m2_k,
                 h_c_w_per_m2_k=station_solution.h_c_w_per_m2_k,
                 q_station_w=station_solution.q_station_w,
@@ -614,10 +1142,19 @@ def run_thermal_analysis(
                 required_pressure_in_pa=None,
                 pressure_drop_station_pa=station_solution.pressure_drop_station_pa,
                 reynolds_coolant=station_solution.reynolds_coolant,
+                coolant_prandtl_number=station_solution.prandtl_coolant,
                 coolant_cp_j_per_kg_k=station_solution.coolant_cp_j_per_kg_k,
                 coolant_viscosity_pa_s=station_solution.coolant_viscosity_pa_s,
                 nusselt_coolant=station_solution.nusselt_coolant,
+                nusselt_coolant_method=station_solution.nusselt_coolant_method,
+                nusselt_dittus_boelter=station_solution.nusselt_dittus_boelter,
+                nusselt_sieder_tate=station_solution.nusselt_sieder_tate,
+                nusselt_gnielinski=station_solution.nusselt_gnielinski,
+                nusselt_spread_fraction=station_solution.nusselt_spread_fraction,
                 friction_factor=station_solution.friction_factor,
+                h_c_dittus_boelter_w_per_m2_k=station_solution.h_c_dittus_boelter_w_per_m2_k,
+                h_c_sieder_tate_w_per_m2_k=station_solution.h_c_sieder_tate_w_per_m2_k,
+                h_c_gnielinski_w_per_m2_k=station_solution.h_c_gnielinski_w_per_m2_k,
                 thermal_margin_k=thermal_margin_k,
                 q_conv_w_per_m2=station_solution.q_conv_w_per_m2,
                 q_rad_w_per_m2=station_solution.q_rad_w_per_m2,
@@ -630,6 +1167,30 @@ def run_thermal_analysis(
                 radiation_model_note=station_solution.radiation_model_note,
                 participating_species_mode=station_solution.participating_species_mode,
                 participating_species_used=station_solution.participating_species_used,
+                x_ref_m=sample.x_ref_m,
+                r_ref_m=sample.radius_ref_m,
+                area_ref_m2=sample.area_ref_m2,
+                eps_ref=sample.eps_ref,
+                station_reference_label=sample.reference_label,
+                station_reference_reason=sample.reference_reason,
+                x_engine_start_m=sample.x_start_m,
+                x_engine_end_m=sample.x_end_m,
+                x_engine_mid_m=sample.x_mid_m,
+                r_start_m=sample.radius_start_m,
+                r_mid_m=sample.radius_mid_m,
+                r_end_m=sample.radius_end_m,
+                eps_start=sample.eps_start,
+                eps_mid=sample.eps_mid,
+                eps_end=sample.eps_end,
+                region_label=sample.region_label,
+                engine_station_index=sample.engine_station_index,
+                coolant_path_index=sample.coolant_path_index,
+                coolant_pass_id=sample.coolant_pass_id,
+                coolant_bulk_temperature_reference_label=station_solution.coolant_bulk_temperature_reference_label,
+                coolant_bulk_temperature_reference_reason=station_solution.coolant_bulk_temperature_reference_reason,
+                coolant_wall_viscosity_pa_s=station_solution.coolant_wall_viscosity_pa_s,
+                sieder_tate_viscosity_ratio=station_solution.sieder_tate_viscosity_ratio,
+                sieder_tate_correction_factor=station_solution.sieder_tate_correction_factor,
                 status_summary=_join_station_note_group(status_notes, empty_value="ok"),
                 warning_summary=_join_station_note_group(warning_notes, empty_value="--"),
                 status=", ".join(status_messages) if status_messages else "ok",
@@ -638,6 +1199,15 @@ def run_thermal_analysis(
                 iterations=station_solution.iterations,
                 converged=station_solution.converged,
                 residual_k=station_solution.residual_k,
+                solver_scheme_label=station_solution.solver_scheme_label,
+                conductance_rule_label=station_solution.conductance_rule_label,
+                gas_conductance_w_per_k=station_solution.gas_conductance_w_per_k,
+                coolant_conductance_w_per_k=station_solution.coolant_conductance_w_per_k,
+                gas_resistance_k_per_w=station_solution.gas_resistance_k_per_w,
+                wall_resistance_k_per_w=station_solution.wall_resistance_k_per_w,
+                coolant_resistance_k_per_w=station_solution.coolant_resistance_k_per_w,
+                coolant_flow_area_m2=station_solution.coolant_flow_area_m2,
+                coolant_wall_area_m2=station_solution.coolant_wall_area_m2,
             )
         )
 
@@ -655,11 +1225,47 @@ def run_thermal_analysis(
         thermal_inputs=thermal_inputs,
         wall_thickness_m=wall_thickness_m,
     )
-    summary = _build_summary(station_results, thermal_inputs, pressure_summary)
+    summary = _build_summary(station_results, scenario, pressure_summary)
     return ThermalAnalysisResult(
         inputs=thermal_inputs,
         summary=summary,
         stations=station_results,
+    )
+
+
+def _precalculate_thermal_model(
+    bundle: ExportBundle,
+    scenario: ThermalScenario,
+) -> _ThermalPrecalculation:
+    """Prebuild the active annulus resistance path from the selected coolant circuit."""
+
+    thermal_inputs = scenario.global_conditions
+    station_samples = _build_station_samples_for_flow_direction(
+        bundle,
+        thermal_inputs.solver_settings,
+        thermal_inputs.flow_direction,
+    )
+    if thermal_inputs.flow_direction is CoolingFlowDirection.NOZZLE_TO_INJECTOR:
+        station_samples = list(reversed(station_samples))
+        for coolant_path_index, sample in enumerate(station_samples):
+            sample.coolant_path_index = coolant_path_index
+    bundle_status_notes = _bundle_status_notes(
+        bundle,
+        thermal_inputs.solver_settings,
+        station_sample_count=len(station_samples),
+    )
+    precalc_note = "thermal precalculation: annulus resistance path built from the active single-pass coolant circuit"
+    if precalc_note not in bundle_status_notes:
+        bundle_status_notes = (precalc_note, *bundle_status_notes)
+    return _ThermalPrecalculation(
+        scenario=scenario,
+        effective_inputs=thermal_inputs,
+        station_samples=station_samples,
+        bundle_status_notes=bundle_status_notes,
+        wall_temperature_limit_k=_wall_material_screening_limit_k(bundle.inputs.liner_material),
+        wall_thickness_m=_resolved_wall_thickness_m(bundle),
+        wall_material_id=bundle.inputs.liner_material,
+        reference_coolant_pressure_estimate_pa=_reference_coolant_pressure_estimate_pa(bundle, thermal_inputs),
     )
 
 
@@ -786,13 +1392,97 @@ def _default_external_feed_pressure_drop_pa(bundle: ExportBundle | None) -> floa
     return max(0.02 * bundle.inputs.chamber_pressure_pa, 5.0e4)
 
 
-def _build_station_samples(bundle: ExportBundle, solver_settings: SolverSettings) -> list[_SamplePoint]:
+def _resolve_station_evaluation_point(
+    solver_settings: SolverSettings,
+) -> StationEvaluationPoint:
+    """Return the effective local geometry/gas reference point for the station."""
+
+    if solver_settings.solver_type is ThermalSolverType.FORWARD_EULER:
+        return StationEvaluationPoint.COOLANT_UPSTREAM
+    if solver_settings.solver_type is ThermalSolverType.BACKWARD_EULER:
+        return StationEvaluationPoint.COOLANT_DOWNSTREAM
+    return StationEvaluationPoint.MIDPOINT
+
+
+def _resolve_coolant_bulk_temperature_reference(
+    solver_settings: SolverSettings,
+) -> CoolantBulkTemperatureReference:
+    """Return the effective coolant bulk temperature rule used for properties."""
+
+    if solver_settings.solver_type is ThermalSolverType.FORWARD_EULER:
+        return CoolantBulkTemperatureReference.COOLANT_INLET
+    if solver_settings.solver_type is ThermalSolverType.BACKWARD_EULER:
+        return CoolantBulkTemperatureReference.COOLANT_OUTLET
+    if solver_settings.solver_type is ThermalSolverType.CRANK_NICOLSON:
+        return CoolantBulkTemperatureReference.ITERATED_MEAN
+    return CoolantBulkTemperatureReference.ITERATED_MEAN
+
+
+def _select_station_reference_state(
+    *,
+    station_start_state: _StationReferenceState,
+    station_mid_state: _StationReferenceState,
+    station_end_state: _StationReferenceState,
+    flow_direction: CoolingFlowDirection,
+    station_evaluation_point: StationEvaluationPoint,
+    solver_settings: SolverSettings,
+) -> tuple[_StationReferenceState, str, str]:
+    """Pick the explicit local station reference for geometry and gas-side data."""
+
+    if station_evaluation_point is StationEvaluationPoint.SOLVER_DEFAULT:
+        station_evaluation_point = _resolve_station_evaluation_point(solver_settings)
+    if station_evaluation_point is StationEvaluationPoint.MIDPOINT:
+        return station_mid_state, "midpoint", "midpoint reference for geometry and gas-side properties"
+    if station_evaluation_point is StationEvaluationPoint.TRAPEZOIDAL:
+        return (
+            station_mid_state,
+            "midpoint",
+            "trapezoidal start/end averaging planned; midpoint reference used for this MVP",
+        )
+    if station_evaluation_point is StationEvaluationPoint.COOLANT_UPSTREAM:
+        if flow_direction is CoolingFlowDirection.INJECTOR_TO_NOZZLE:
+            return (
+                station_start_state,
+                "coolant upstream",
+                "coolant-upstream reference mapped to geometric station start",
+            )
+        return (
+            station_end_state,
+            "coolant upstream",
+            "coolant-upstream reference mapped to geometric station end",
+        )
+    if flow_direction is CoolingFlowDirection.INJECTOR_TO_NOZZLE:
+        return (
+            station_end_state,
+            "coolant downstream",
+            "coolant-downstream reference mapped to geometric station end",
+        )
+    return (
+        station_start_state,
+        "coolant downstream",
+        "coolant-downstream reference mapped to geometric station start",
+    )
+
+
+def _build_station_samples_for_flow_direction(
+    bundle: ExportBundle,
+    solver_settings: SolverSettings,
+    flow_direction: CoolingFlowDirection,
+) -> list[_SamplePoint]:
     if solver_settings.station_distribution_mode is StationDistributionMode.CEA_PROFILE:
-        return _build_station_samples_from_profile(bundle)
-    return _build_station_samples_manual(bundle, solver_settings.station_count)
+        samples = _build_station_samples_from_profile(bundle, solver_settings, flow_direction)
+    else:
+        samples = _build_station_samples_manual(bundle, solver_settings, flow_direction)
+    for coolant_path_index, sample in enumerate(samples):
+        sample.coolant_path_index = coolant_path_index
+    return samples
 
 
-def _build_station_samples_manual(bundle: ExportBundle, station_count: int) -> list[_SamplePoint]:
+def _build_station_samples_manual(
+    bundle: ExportBundle,
+    solver_settings: SolverSettings,
+    flow_direction: CoolingFlowDirection,
+) -> list[_SamplePoint]:
     contour = bundle.contour
     profile = bundle.thermochemistry_profile
     cumulative_lengths = _cumulative_arc_lengths(contour)
@@ -801,29 +1491,81 @@ def _build_station_samples_manual(bundle: ExportBundle, station_count: int) -> l
         raise InputValidationError(["Current Design contour length is invalid for thermal station generation."])
 
     samples: list[_SamplePoint] = []
+    throat_area_m2 = max(bundle.geometry.throat_area_m2, 1.0e-12)
+    station_evaluation_point = _resolve_station_evaluation_point(solver_settings)
+    station_count = solver_settings.station_count
     for index in range(station_count):
         s_start = total_length * index / station_count
         s_end = total_length * (index + 1) / station_count
         s_mid = 0.5 * (s_start + s_end)
-        x_start_m, _, _ = _interpolate_contour_at_s(contour, cumulative_lengths, s_start)
-        x_end_m, _, _ = _interpolate_contour_at_s(contour, cumulative_lengths, s_end)
-        x_m, radius_m, area_m2 = _interpolate_contour_at_s(contour, cumulative_lengths, s_mid)
-        profile_point = _nearest_profile_point(profile, x_m)
+        x_start_m, radius_start_m, area_start_m2 = _interpolate_contour_at_s(contour, cumulative_lengths, s_start)
+        x_end_m, radius_end_m, area_end_m2 = _interpolate_contour_at_s(contour, cumulative_lengths, s_end)
+        x_mid_m, radius_mid_m, area_mid_m2 = _interpolate_contour_at_s(contour, cumulative_lengths, s_mid)
+        start_state = _StationReferenceState(
+            x_m=x_start_m,
+            radius_m=radius_start_m,
+            area_m2=area_start_m2,
+            eps=area_start_m2 / throat_area_m2,
+            profile_point=_nearest_profile_point(profile, x_start_m),
+        )
+        mid_state = _StationReferenceState(
+            x_m=x_mid_m,
+            radius_m=radius_mid_m,
+            area_m2=area_mid_m2,
+            eps=area_mid_m2 / throat_area_m2,
+            profile_point=_nearest_profile_point(profile, x_mid_m),
+        )
+        end_state = _StationReferenceState(
+            x_m=x_end_m,
+            radius_m=radius_end_m,
+            area_m2=area_end_m2,
+            eps=area_end_m2 / throat_area_m2,
+            profile_point=_nearest_profile_point(profile, x_end_m),
+        )
+        reference_state, reference_label, reference_reason = _select_station_reference_state(
+            station_start_state=start_state,
+            station_mid_state=mid_state,
+            station_end_state=end_state,
+            flow_direction=flow_direction,
+            station_evaluation_point=station_evaluation_point,
+            solver_settings=solver_settings,
+        )
         samples.append(
             _SamplePoint(
                 x_start_m=x_start_m,
+                radius_start_m=radius_start_m,
+                area_start_m2=area_start_m2,
+                eps_start=start_state.eps,
+                x_mid_m=x_mid_m,
+                radius_mid_m=radius_mid_m,
+                area_mid_m2=area_mid_m2,
+                eps_mid=mid_state.eps,
                 x_end_m=x_end_m,
-                x_m=x_m,
-                radius_m=radius_m,
-                area_m2=area_m2,
+                radius_end_m=radius_end_m,
+                area_end_m2=area_end_m2,
+                eps_end=end_state.eps,
+                x_ref_m=reference_state.x_m,
+                radius_ref_m=reference_state.radius_m,
+                area_ref_m2=reference_state.area_m2,
+                eps_ref=reference_state.eps,
+                reference_label=reference_label,
+                reference_reason=reference_reason,
+                profile_point_start=start_state.profile_point,
+                profile_point_mid=mid_state.profile_point,
+                profile_point_end=end_state.profile_point,
+                profile_point_ref=reference_state.profile_point,
                 ds_m=s_end - s_start,
-                profile_point=profile_point,
+                engine_station_index=index,
             )
         )
     return samples
 
 
-def _build_station_samples_from_profile(bundle: ExportBundle) -> list[_SamplePoint]:
+def _build_station_samples_from_profile(
+    bundle: ExportBundle,
+    solver_settings: SolverSettings,
+    flow_direction: CoolingFlowDirection,
+) -> list[_SamplePoint]:
     """Use the committed thermochemistry-profile stations as the thermal grid.
 
     This mode keeps the cooling table aligned with the existing CEA-derived
@@ -835,26 +1577,75 @@ def _build_station_samples_from_profile(bundle: ExportBundle) -> list[_SamplePoi
     if len(profile) < 2:
         raise InputValidationError(["CEA-profile station mode requires at least two thermochemistry profile points."])
 
+    throat_area_m2 = max(bundle.geometry.throat_area_m2, 1.0e-12)
+    station_evaluation_point = _resolve_station_evaluation_point(solver_settings)
     samples: list[_SamplePoint] = []
     for left_point, right_point in zip(profile, profile[1:]):
         x_start_m = left_point.x_m
         x_end_m = right_point.x_m
         x_mid_m = 0.5 * (x_start_m + x_end_m)
-        radius_m = 0.5 * (left_point.radius_m + right_point.radius_m)
-        area_m2 = math.pi * radius_m**2
+        radius_mid_m = 0.5 * (left_point.radius_m + right_point.radius_m)
+        area_mid_m2 = 0.5 * (left_point.area_m2 + right_point.area_m2)
         ds_m = math.hypot(
             right_point.x_m - left_point.x_m,
             right_point.radius_m - left_point.radius_m,
         )
+        midpoint_profile = _average_profile_point(left_point, right_point)
+        start_state = _StationReferenceState(
+            x_m=x_start_m,
+            radius_m=left_point.radius_m,
+            area_m2=left_point.area_m2,
+            eps=left_point.area_m2 / throat_area_m2,
+            profile_point=left_point,
+        )
+        mid_state = _StationReferenceState(
+            x_m=x_mid_m,
+            radius_m=radius_mid_m,
+            area_m2=area_mid_m2,
+            eps=area_mid_m2 / throat_area_m2,
+            profile_point=midpoint_profile,
+        )
+        end_state = _StationReferenceState(
+            x_m=x_end_m,
+            radius_m=right_point.radius_m,
+            area_m2=right_point.area_m2,
+            eps=right_point.area_m2 / throat_area_m2,
+            profile_point=right_point,
+        )
+        reference_state, reference_label, reference_reason = _select_station_reference_state(
+            station_start_state=start_state,
+            station_mid_state=mid_state,
+            station_end_state=end_state,
+            flow_direction=flow_direction,
+            station_evaluation_point=station_evaluation_point,
+            solver_settings=solver_settings,
+        )
         samples.append(
             _SamplePoint(
                 x_start_m=x_start_m,
+                radius_start_m=left_point.radius_m,
+                area_start_m2=left_point.area_m2,
+                eps_start=start_state.eps,
+                x_mid_m=x_mid_m,
+                radius_mid_m=radius_mid_m,
+                area_mid_m2=area_mid_m2,
+                eps_mid=mid_state.eps,
                 x_end_m=x_end_m,
-                x_m=x_mid_m,
-                radius_m=radius_m,
-                area_m2=area_m2,
+                radius_end_m=right_point.radius_m,
+                area_end_m2=right_point.area_m2,
+                eps_end=end_state.eps,
+                x_ref_m=reference_state.x_m,
+                radius_ref_m=reference_state.radius_m,
+                area_ref_m2=reference_state.area_m2,
+                eps_ref=reference_state.eps,
+                reference_label=reference_label,
+                reference_reason=reference_reason,
+                profile_point_start=left_point,
+                profile_point_mid=midpoint_profile,
+                profile_point_end=right_point,
+                profile_point_ref=reference_state.profile_point,
                 ds_m=ds_m,
-                profile_point=_average_profile_point(left_point, right_point),
+                engine_station_index=left_point.station_index,
             )
         )
     return samples
@@ -982,6 +1773,8 @@ def _build_annulus_geometry(sample: _SamplePoint, annulus_gap_m: float) -> Annul
     wetted_perimeter = 2.0 * math.pi * (r_inner + r_outer)
     hydraulic_diameter = 4.0 * area_annulus / max(wetted_perimeter, 1.0e-12)
     hot_wall_area = 2.0 * math.pi * r_inner * sample.ds_m
+    coolant_wall_area = 2.0 * math.pi * r_outer * sample.ds_m
+    wall_mean_area = 2.0 * math.pi * r_mean * sample.ds_m
     return AnnulusCoolingGeometry(
         r_inner_m=r_inner,
         r_outer_m=r_outer,
@@ -990,12 +1783,108 @@ def _build_annulus_geometry(sample: _SamplePoint, annulus_gap_m: float) -> Annul
         wetted_perimeter_m=wetted_perimeter,
         hydraulic_diameter_m=hydraulic_diameter,
         hot_wall_area_m2=hot_wall_area,
+        coolant_wall_area_m2=coolant_wall_area,
+        wall_mean_area_m2=wall_mean_area,
     )
+
+
+def _build_station_subpoints(
+    sample: _SamplePoint,
+    annulus_gap_m: float,
+) -> dict[str, _StationSubpoint]:
+    """Build start/mid/end subpoints with explicit flow and heat-transfer areas."""
+
+    def make_subpoint(name: str, x_m: float, radius_m: float, area_m2: float, eps: float, profile_point: ThermochemistryProfilePoint | None) -> _StationSubpoint:
+        geometry = _build_annulus_geometry(
+            _SamplePoint(
+                x_start_m=sample.x_start_m,
+                radius_start_m=sample.radius_start_m,
+                area_start_m2=sample.area_start_m2,
+                eps_start=sample.eps_start,
+                x_mid_m=sample.x_mid_m,
+                radius_mid_m=sample.radius_mid_m,
+                area_mid_m2=sample.area_mid_m2,
+                eps_mid=sample.eps_mid,
+                x_end_m=sample.x_end_m,
+                radius_end_m=sample.radius_end_m,
+                area_end_m2=sample.area_end_m2,
+                eps_end=sample.eps_end,
+                x_ref_m=x_m,
+                radius_ref_m=radius_m,
+                area_ref_m2=area_m2,
+                eps_ref=eps,
+                reference_label=name,
+                reference_reason=f"{name} subpoint",
+                profile_point_start=sample.profile_point_start,
+                profile_point_mid=sample.profile_point_mid,
+                profile_point_end=sample.profile_point_end,
+                profile_point_ref=profile_point,
+                ds_m=sample.ds_m,
+                engine_station_index=sample.engine_station_index,
+                coolant_path_index=sample.coolant_path_index,
+                coolant_pass_id=sample.coolant_pass_id,
+            ),
+            annulus_gap_m,
+        )
+        return _StationSubpoint(
+            name=name,
+            x_m=x_m,
+            radius_m=radius_m,
+            r_outer_m=geometry.r_outer_m,
+            r_mean_m=geometry.r_mean_m,
+            area_gas_m2=area_m2,
+            eps=eps,
+            coolant_flow_area_m2=geometry.area_annulus_m2,
+            hot_wall_area_m2=geometry.hot_wall_area_m2,
+            coolant_wall_area_m2=geometry.coolant_wall_area_m2,
+            wall_mean_area_m2=geometry.wall_mean_area_m2,
+            hydraulic_diameter_m=geometry.hydraulic_diameter_m,
+            profile_point=profile_point,
+        )
+
+    return {
+        "start": make_subpoint(
+            "start",
+            sample.x_start_m,
+            sample.radius_start_m,
+            sample.area_start_m2,
+            sample.eps_start,
+            sample.profile_point_start,
+        ),
+        "mid": make_subpoint(
+            "mid",
+            sample.x_mid_m,
+            sample.radius_mid_m,
+            sample.area_mid_m2,
+            sample.eps_mid,
+            sample.profile_point_mid,
+        ),
+        "end": make_subpoint(
+            "end",
+            sample.x_end_m,
+            sample.radius_end_m,
+            sample.area_end_m2,
+            sample.eps_end,
+            sample.profile_point_end,
+        ),
+    }
 
 
 def _gas_side_properties(
     bundle: ExportBundle,
     sample: _SamplePoint,
+    curvature_mode: BartzThroatCurvatureMode,
+) -> tuple[_GasSideProperties, str]:
+    return _gas_side_properties_from_profile_point(
+        bundle,
+        sample.profile_point,
+        curvature_mode,
+    )
+
+
+def _gas_side_properties_from_profile_point(
+    bundle: ExportBundle,
+    profile_point: ThermochemistryProfilePoint | None,
     curvature_mode: BartzThroatCurvatureMode,
 ) -> tuple[_GasSideProperties, str]:
     """Collect one gas-side property set from existing CEA/profile output.
@@ -1007,7 +1896,6 @@ def _gas_side_properties(
     available yet.
     """
 
-    profile_point = sample.profile_point
     state = profile_point.state if profile_point is not None else None
     recovery_temperature_k = _first_positive(
         getattr(state, "adiabatic_wall_temperature_k", None),
@@ -1085,11 +1973,288 @@ def _reference_coolant_pressure_estimate_pa(
     )
 
 
+def _resolved_coolant_bulk_temperature(
+    solver_settings: SolverSettings,
+    coolant_temperature_in_k: float,
+    coolant_temperature_out_guess_k: float,
+) -> tuple[float, str, str]:
+    """Return the explicit T_b,c used for coolant-side property evaluation."""
+
+    reference = _resolve_coolant_bulk_temperature_reference(solver_settings)
+    if reference is CoolantBulkTemperatureReference.COOLANT_INLET:
+        return (
+            coolant_temperature_in_k,
+            "coolant inlet",
+            "T_b,c reference: coolant inlet for explicit forward station properties",
+        )
+    if reference is CoolantBulkTemperatureReference.COOLANT_OUTLET:
+        return (
+            coolant_temperature_out_guess_k,
+            "coolant outlet",
+            "T_b,c reference: coolant outlet from iterated station guess",
+        )
+    if reference is CoolantBulkTemperatureReference.STATION_MEAN:
+        return (
+            0.5 * (coolant_temperature_in_k + coolant_temperature_out_guess_k),
+            "station mean",
+            "T_b,c reference: station mean of coolant inlet and outlet",
+        )
+    return (
+        0.5 * (coolant_temperature_in_k + coolant_temperature_out_guess_k),
+        "iterated station mean",
+        "T_b,c reference: iterated station mean of coolant inlet and outlet",
+    )
+
+
+def _solver_scheme_label(solver_type: ThermalSolverType) -> str:
+    if solver_type is ThermalSolverType.FORWARD_EULER:
+        return "Forward Euler"
+    if solver_type is ThermalSolverType.BACKWARD_EULER:
+        return "Backward Euler"
+    if solver_type is ThermalSolverType.CRANK_NICOLSON:
+        return "Crank-Nicolson / trapezoidal"
+    if solver_type is ThermalSolverType.SIMPSON_CONDUCTANCE:
+        return "Simpson conductance averaging"
+    return "NTU / exponential"
+
+
+def _upstream_subpoint_name(flow_direction: CoolingFlowDirection) -> str:
+    return "start" if flow_direction is CoolingFlowDirection.INJECTOR_TO_NOZZLE else "end"
+
+
+def _downstream_subpoint_name(flow_direction: CoolingFlowDirection) -> str:
+    return "end" if flow_direction is CoolingFlowDirection.INJECTOR_TO_NOZZLE else "start"
+
+
+def _evaluate_local_station_closure(
+    *,
+    bundle: ExportBundle,
+    subpoint: _StationSubpoint,
+    curvature_mode: BartzThroatCurvatureMode,
+    coolant_type: str,
+    coolant_mass_flow_kg_per_s: float,
+    coolant_temperature_bulk_k: float,
+    local_pressure_estimate_pa: float | None,
+    coolant_roughness_m: float,
+    coolant_wall_temperature_k: float | None,
+    primary_coolant_nusselt_method: CoolantNusseltMethod,
+    coolant_bulk_temperature_reference_label: str,
+    coolant_bulk_temperature_reference_reason: str,
+    wall_temperature_guess_k: float,
+    station_length_m: float,
+) -> _LocalClosureState:
+    gas_side_properties, gas_temperature_source = _gas_side_properties_from_profile_point(
+        bundle,
+        subpoint.profile_point,
+        curvature_mode,
+    )
+    geometry = AnnulusCoolingGeometry(
+        r_inner_m=subpoint.radius_m,
+        r_outer_m=subpoint.r_outer_m,
+        r_mean_m=subpoint.r_mean_m,
+        area_annulus_m2=subpoint.coolant_flow_area_m2,
+        wetted_perimeter_m=2.0 * math.pi * (subpoint.radius_m + subpoint.r_outer_m),
+        hydraulic_diameter_m=subpoint.hydraulic_diameter_m,
+        hot_wall_area_m2=subpoint.hot_wall_area_m2,
+        coolant_wall_area_m2=subpoint.coolant_wall_area_m2,
+        wall_mean_area_m2=subpoint.wall_mean_area_m2,
+    )
+    coolant_transport = _evaluate_coolant_transport(
+        geometry,
+        station_length_m,
+        coolant_type,
+        coolant_mass_flow_kg_per_s,
+        coolant_temperature_bulk_k,
+        local_pressure_estimate_pa,
+        coolant_roughness_m,
+        coolant_wall_temperature_k=coolant_wall_temperature_k,
+        primary_coolant_nusselt_method=primary_coolant_nusselt_method,
+        coolant_bulk_temperature_reference_label=coolant_bulk_temperature_reference_label,
+        coolant_bulk_temperature_reference_reason=coolant_bulk_temperature_reference_reason,
+    )
+    h_g_w_per_m2_k = _bartz_gas_side_heat_transfer_coefficient_for_area(
+        bundle,
+        subpoint.area_gas_m2,
+        gas_side_properties,
+        wall_temperature_guess_k,
+    )
+    notes = list(coolant_transport.notes)
+    if gas_temperature_source != "adiabatic-wall":
+        notes.append("gas-side recovery placeholder")
+    return _LocalClosureState(
+        subpoint=subpoint,
+        gas_side_properties=gas_side_properties,
+        coolant_transport=coolant_transport,
+        h_g_w_per_m2_k=h_g_w_per_m2_k,
+        g_gas_w_per_k=h_g_w_per_m2_k * subpoint.hot_wall_area_m2,
+        g_coolant_w_per_k=coolant_transport.h_c_w_per_m2_k * subpoint.coolant_wall_area_m2,
+        notes=tuple(notes),
+    )
+
+
+def _weighted_sum(values: list[float], weights: list[float]) -> float:
+    return sum(value * weight for value, weight in zip(values, weights))
+
+
+def _weighted_optional_average(values: list[float | None], weights: list[float]) -> float | None:
+    usable = [(value, weight) for value, weight in zip(values, weights) if value is not None]
+    if not usable:
+        return None
+    weight_sum = sum(weight for _, weight in usable)
+    return sum(value * weight for value, weight in usable) / max(weight_sum, 1.0e-12)
+
+
+def _aggregate_station_conductance_state(
+    *,
+    solver_settings: SolverSettings,
+    flow_direction: CoolingFlowDirection,
+    closures: dict[str, _LocalClosureState],
+    coolant_temperature_bulk_k: float,
+) -> _StationConductanceState:
+    solver_type = solver_settings.solver_type
+    if solver_type is ThermalSolverType.FORWARD_EULER:
+        display_name = _upstream_subpoint_name(flow_direction)
+        weights = [1.0]
+        selected = [closures[display_name]]
+        conductance_rule_label = "upstream rectangle"
+    elif solver_type is ThermalSolverType.BACKWARD_EULER:
+        display_name = _downstream_subpoint_name(flow_direction)
+        weights = [1.0]
+        selected = [closures[display_name]]
+        conductance_rule_label = "downstream rectangle / implicit"
+    elif solver_type is ThermalSolverType.CRANK_NICOLSON:
+        display_name = "mid"
+        selected = [closures["start"], closures["end"]]
+        weights = [0.5, 0.5]
+        conductance_rule_label = "trapezoidal conductance averaging"
+    elif solver_type is ThermalSolverType.SIMPSON_CONDUCTANCE:
+        display_name = "mid"
+        selected = [closures["start"], closures["mid"], closures["end"]]
+        weights = [1.0 / 6.0, 4.0 / 6.0, 1.0 / 6.0]
+        conductance_rule_label = "Simpson area-conductance averaging"
+    else:
+        display_name = "mid"
+        weights = [1.0]
+        selected = [closures["mid"]]
+        conductance_rule_label = "NTU midpoint/lumped conductance"
+
+    display_closure = closures[display_name]
+    g_gas_w_per_k = _weighted_sum([closure.g_gas_w_per_k for closure in selected], weights)
+    g_coolant_w_per_k = _weighted_sum([closure.g_coolant_w_per_k for closure in selected], weights)
+    hot_area_station_m2 = _weighted_sum([closure.subpoint.hot_wall_area_m2 for closure in selected], weights)
+    coolant_area_station_m2 = _weighted_sum([closure.subpoint.coolant_wall_area_m2 for closure in selected], weights)
+    flow_area_station_m2 = _weighted_sum([closure.subpoint.coolant_flow_area_m2 for closure in selected], weights)
+    wall_mean_area_station_m2 = _weighted_sum([closure.subpoint.wall_mean_area_m2 for closure in selected], weights)
+    hydraulic_diameter_station_m = _weighted_sum([closure.subpoint.hydraulic_diameter_m for closure in selected], weights)
+    recovery_temperature_k = _weighted_sum([closure.gas_side_properties.recovery_temperature_k for closure in selected], weights)
+    h_g_station_w_per_m2_k = g_gas_w_per_k / max(hot_area_station_m2, 1.0e-12)
+    h_c_station_w_per_m2_k = g_coolant_w_per_k / max(coolant_area_station_m2, 1.0e-12)
+    notes: list[str] = [conductance_rule_label]
+    for closure in selected:
+        for note in closure.notes:
+            if note not in notes:
+                notes.append(note)
+    return _StationConductanceState(
+        integration_scheme_label=_solver_scheme_label(solver_type),
+        conductance_rule_label=conductance_rule_label,
+        display_subpoint_name=display_name,
+        x_display_m=display_closure.subpoint.x_m,
+        radius_display_m=display_closure.subpoint.radius_m,
+        area_display_m2=display_closure.subpoint.area_gas_m2,
+        eps_display=display_closure.subpoint.eps,
+        recovery_temperature_k=recovery_temperature_k,
+        coolant_bulk_temperature_k=coolant_temperature_bulk_k,
+        g_gas_w_per_k=g_gas_w_per_k,
+        g_coolant_w_per_k=g_coolant_w_per_k,
+        h_g_station_w_per_m2_k=h_g_station_w_per_m2_k,
+        h_c_station_w_per_m2_k=h_c_station_w_per_m2_k,
+        nusselt_station=_weighted_sum([closure.coolant_transport.nusselt_number for closure in selected], weights),
+        reynolds_station=_weighted_sum([closure.coolant_transport.reynolds_number for closure in selected], weights),
+        prandtl_station=_weighted_sum([closure.coolant_transport.prandtl_number for closure in selected], weights),
+        hot_area_station_m2=hot_area_station_m2,
+        coolant_area_station_m2=coolant_area_station_m2,
+        flow_area_station_m2=flow_area_station_m2,
+        wall_mean_area_station_m2=wall_mean_area_station_m2,
+        hydraulic_diameter_station_m=hydraulic_diameter_station_m,
+        pressure_drop_station_pa=_weighted_sum([closure.coolant_transport.pressure_drop_total_pa for closure in selected], weights),
+        coolant_cp_j_per_kg_k=_weighted_sum([closure.coolant_transport.properties.cp_j_per_kg_k for closure in selected], weights),
+        coolant_viscosity_pa_s=_weighted_sum([closure.coolant_transport.properties.viscosity_pa_s for closure in selected], weights),
+        coolant_wall_viscosity_pa_s=_weighted_optional_average(
+            [closure.coolant_transport.wall_viscosity_pa_s for closure in selected],
+            weights,
+        ),
+        nusselt_method=display_closure.coolant_transport.nusselt_method,
+        nusselt_dittus_boelter=_weighted_optional_average(
+            [closure.coolant_transport.nusselt_dittus_boelter for closure in selected],
+            weights,
+        ),
+        nusselt_sieder_tate=_weighted_optional_average(
+            [closure.coolant_transport.nusselt_sieder_tate for closure in selected],
+            weights,
+        ),
+        nusselt_gnielinski=_weighted_optional_average(
+            [closure.coolant_transport.nusselt_gnielinski for closure in selected],
+            weights,
+        ),
+        nusselt_spread_fraction=_weighted_optional_average(
+            [closure.coolant_transport.nusselt_spread_fraction for closure in selected],
+            weights,
+        ),
+        h_c_dittus_boelter_w_per_m2_k=_weighted_optional_average(
+            [closure.coolant_transport.h_c_dittus_boelter_w_per_m2_k for closure in selected],
+            weights,
+        ),
+        h_c_sieder_tate_w_per_m2_k=_weighted_optional_average(
+            [closure.coolant_transport.h_c_sieder_tate_w_per_m2_k for closure in selected],
+            weights,
+        ),
+        h_c_gnielinski_w_per_m2_k=_weighted_optional_average(
+            [closure.coolant_transport.h_c_gnielinski_w_per_m2_k for closure in selected],
+            weights,
+        ),
+        friction_factor=_weighted_sum([closure.coolant_transport.friction_factor for closure in selected], weights),
+        sieder_tate_viscosity_ratio=_weighted_optional_average(
+            [closure.coolant_transport.sieder_tate_viscosity_ratio for closure in selected],
+            weights,
+        ),
+        sieder_tate_correction_factor=_weighted_optional_average(
+            [closure.coolant_transport.sieder_tate_correction_factor for closure in selected],
+            weights,
+        ),
+        representative_profile_point=display_closure.subpoint.profile_point,
+        notes=tuple(notes),
+    )
+
+
+def _station_wall_resistance_k_per_w(
+    wall_thickness_m: float,
+    wall_conductivity_w_per_m_k: float,
+    wall_mean_area_m2: float,
+) -> float:
+    return wall_thickness_m / max(wall_conductivity_w_per_m_k * wall_mean_area_m2, 1.0e-12)
+
+
+def _station_total_conductance_w_per_k(
+    gas_conductance_w_per_k: float,
+    coolant_conductance_w_per_k: float,
+    wall_resistance_k_per_w: float,
+) -> tuple[float, float, float]:
+    gas_resistance_k_per_w = 1.0 / max(gas_conductance_w_per_k, 1.0e-12)
+    coolant_resistance_k_per_w = 1.0 / max(coolant_conductance_w_per_k, 1.0e-12)
+    total_resistance_k_per_w = gas_resistance_k_per_w + wall_resistance_k_per_w + coolant_resistance_k_per_w
+    return (
+        1.0 / max(total_resistance_k_per_w, 1.0e-12),
+        gas_resistance_k_per_w,
+        coolant_resistance_k_per_w,
+    )
+
+
 def _solve_station_heat_balance(
     bundle: ExportBundle,
     sample: _SamplePoint,
     station_geometry: AnnulusCoolingGeometry,
-    gas_side_properties: _GasSideProperties,
+    flow_direction: CoolingFlowDirection,
+    curvature_mode: BartzThroatCurvatureMode,
     coolant_temperature_in_k: float,
     coolant_type: str,
     coolant_mass_flow_kg_per_s: float,
@@ -1097,6 +2262,7 @@ def _solve_station_heat_balance(
     wall_thickness_m: float,
     wall_material_id: str,
     coolant_roughness_m: float,
+    primary_coolant_nusselt_method: CoolantNusseltMethod,
     solver_settings: SolverSettings,
     radiation_settings: RadiationSettings,
     previous_station_result: ThermalStationResult | None = None,
@@ -1108,7 +2274,15 @@ def _solve_station_heat_balance(
     clean seam for later temperature/pressure-dependent coolant properties.
     """
 
-    recovery_temperature_k = max(gas_side_properties.recovery_temperature_k, coolant_temperature_in_k + _SMALL_DELTA_K)
+    representative_gas_side_properties, _ = _gas_side_properties(
+        bundle,
+        sample,
+        curvature_mode,
+    )
+    recovery_temperature_k = max(
+        representative_gas_side_properties.recovery_temperature_k,
+        coolant_temperature_in_k + _SMALL_DELTA_K,
+    )
     wall_temperature_guess_k = _initial_wall_temperature_guess(
         recovery_temperature_k,
         coolant_temperature_in_k,
@@ -1116,22 +2290,86 @@ def _solve_station_heat_balance(
     )
     coolant_temperature_out_guess_k = max(coolant_temperature_in_k + 10.0, coolant_temperature_in_k + _SMALL_DELTA_K)
     radiation_heat_flux_guess_w_per_m2 = 0.0
+    station_subpoints = _build_station_subpoints(
+        sample,
+        station_geometry.r_outer_m - station_geometry.r_inner_m,
+    )
 
     last_solution: _StationHeatBalanceResult | None = None
     last_coolant_transport: _CoolantTransportState | None = None
     for iteration in range(max(solver_settings.max_iterations_per_station, 1)):
-        coolant_temperature_bulk_k = 0.5 * (coolant_temperature_in_k + coolant_temperature_out_guess_k)
-        coolant_transport = _evaluate_coolant_transport(
-            station_geometry,
-            sample.ds_m,
-            coolant_type,
-            coolant_mass_flow_kg_per_s,
+        (
             coolant_temperature_bulk_k,
-            local_pressure_estimate_pa,
-            coolant_roughness_m,
+            coolant_bulk_temperature_reference_label,
+            coolant_bulk_temperature_reference_reason,
+        ) = _resolved_coolant_bulk_temperature(
+            solver_settings,
+            coolant_temperature_in_k,
+            coolant_temperature_out_guess_k,
         )
+        coolant_wall_temperature_guess_k = (
+            last_solution.wall_temperature_coolant_side_k
+            if last_solution is not None and last_solution.wall_temperature_coolant_side_k is not None
+            else max(coolant_temperature_bulk_k, min(wall_temperature_guess_k, recovery_temperature_k))
+        )
+        solver_type = solver_settings.solver_type
+        if solver_type is ThermalSolverType.FORWARD_EULER:
+            subpoint_names = (_upstream_subpoint_name(flow_direction),)
+        elif solver_type is ThermalSolverType.BACKWARD_EULER:
+            subpoint_names = (_downstream_subpoint_name(flow_direction),)
+        elif solver_type is ThermalSolverType.CRANK_NICOLSON:
+            subpoint_names = ("start", "end")
+        elif solver_type is ThermalSolverType.SIMPSON_CONDUCTANCE:
+            subpoint_names = ("start", "mid", "end")
+        else:
+            subpoint_names = ("mid",)
+        local_closures: dict[str, _LocalClosureState] = {}
+        for subpoint_name in subpoint_names:
+            local_closures[subpoint_name] = _evaluate_local_station_closure(
+                bundle=bundle,
+                subpoint=station_subpoints[subpoint_name],
+                curvature_mode=curvature_mode,
+                coolant_type=coolant_type,
+                coolant_mass_flow_kg_per_s=coolant_mass_flow_kg_per_s,
+                coolant_temperature_bulk_k=coolant_temperature_bulk_k,
+                local_pressure_estimate_pa=local_pressure_estimate_pa,
+                coolant_roughness_m=coolant_roughness_m,
+                coolant_wall_temperature_k=coolant_wall_temperature_guess_k,
+                primary_coolant_nusselt_method=primary_coolant_nusselt_method,
+                coolant_bulk_temperature_reference_label=coolant_bulk_temperature_reference_label,
+                coolant_bulk_temperature_reference_reason=coolant_bulk_temperature_reference_reason,
+                wall_temperature_guess_k=wall_temperature_guess_k,
+                station_length_m=sample.ds_m,
+            )
+        if "mid" not in local_closures:
+            local_closures["mid"] = _evaluate_local_station_closure(
+                bundle=bundle,
+                subpoint=station_subpoints["mid"],
+                curvature_mode=curvature_mode,
+                coolant_type=coolant_type,
+                coolant_mass_flow_kg_per_s=coolant_mass_flow_kg_per_s,
+                coolant_temperature_bulk_k=coolant_temperature_bulk_k,
+                local_pressure_estimate_pa=local_pressure_estimate_pa,
+                coolant_roughness_m=coolant_roughness_m,
+                coolant_wall_temperature_k=coolant_wall_temperature_guess_k,
+                primary_coolant_nusselt_method=primary_coolant_nusselt_method,
+                coolant_bulk_temperature_reference_label=coolant_bulk_temperature_reference_label,
+                coolant_bulk_temperature_reference_reason=coolant_bulk_temperature_reference_reason,
+                wall_temperature_guess_k=wall_temperature_guess_k,
+                station_length_m=sample.ds_m,
+            )
+        conductance_state = _aggregate_station_conductance_state(
+            solver_settings=solver_settings,
+            flow_direction=flow_direction,
+            closures=local_closures,
+            coolant_temperature_bulk_k=coolant_temperature_bulk_k,
+        )
+        representative_closure = local_closures[conductance_state.display_subpoint_name]
+        coolant_transport = representative_closure.coolant_transport
         last_coolant_transport = coolant_transport
-        wall_mean_temperature_guess_k = wall_temperature_guess_k
+        wall_mean_temperature_guess_k = 0.5 * (
+            wall_temperature_guess_k + coolant_wall_temperature_guess_k
+        )
         wall_material_properties = get_material_properties(
             wall_material_id,
             wall_mean_temperature_guess_k,
@@ -1140,40 +2378,37 @@ def _solve_station_heat_balance(
             wall_material_properties.thermal_conductivity_w_per_m_k or 25.0,
             1.0e-12,
         )
-        h_g_w_per_m2_k = _bartz_gas_side_heat_transfer_coefficient(
-            bundle,
-            sample,
-            gas_side_properties,
-            wall_temperature_guess_k,
-        )
-        overall_heat_transfer = _overall_heat_transfer_w_per_m2_k(
-            h_g_w_per_m2_k,
-            coolant_transport.h_c_w_per_m2_k,
+        wall_resistance_k_per_w = _station_wall_resistance_k_per_w(
             wall_thickness_m,
             wall_conductivity_w_per_m_k,
+            conductance_state.wall_mean_area_station_m2,
+        )
+        overall_station_conductance_w_per_k, gas_resistance_k_per_w, coolant_resistance_k_per_w = _station_total_conductance_w_per_k(
+            conductance_state.g_gas_w_per_k,
+            conductance_state.g_coolant_w_per_k,
+            wall_resistance_k_per_w,
         )
         coolant_temperature_out_conv_k = _clamp_coolant_outlet_temperature(
             _solve_station_temperature_outlet(
-                recovery_temperature_k,
+                conductance_state.recovery_temperature_k,
                 coolant_temperature_in_k,
-                overall_heat_transfer,
-                station_geometry.hot_wall_area_m2,
+                overall_station_conductance_w_per_k,
                 coolant_mass_flow_kg_per_s,
-                coolant_transport.properties.cp_j_per_kg_k,
+                conductance_state.coolant_cp_j_per_kg_k,
                 solver_settings,
             ),
             coolant_temperature_in_k,
             recovery_temperature_k,
         )
-        q_conv_station_w = coolant_mass_flow_kg_per_s * coolant_transport.properties.cp_j_per_kg_k * (
+        q_conv_station_w = coolant_mass_flow_kg_per_s * conductance_state.coolant_cp_j_per_kg_k * (
             coolant_temperature_out_conv_k - coolant_temperature_in_k
         )
-        q_conv_w_per_m2 = q_conv_station_w / max(station_geometry.hot_wall_area_m2, 1.0e-12)
+        q_conv_w_per_m2 = q_conv_station_w / max(conductance_state.hot_area_station_m2, 1.0e-12)
         radiation_result = _compute_station_radiation(
             bundle=bundle,
             sample=sample,
             station_geometry=station_geometry,
-            gas_side_properties=gas_side_properties,
+            gas_side_properties=representative_closure.gas_side_properties,
             wall_temperature_hot_gas_side_k=wall_temperature_guess_k,
             local_pressure_estimate_pa=local_pressure_estimate_pa,
             radiation_settings=radiation_settings,
@@ -1185,7 +2420,7 @@ def _solve_station_heat_balance(
             )
             radiation_result = _RadiationHeatTransferResult(
                 q_rad_w_per_m2=relaxed_q_rad_w_per_m2,
-                q_radiation_station_w=relaxed_q_rad_w_per_m2 * station_geometry.hot_wall_area_m2,
+                q_radiation_station_w=relaxed_q_rad_w_per_m2 * conductance_state.hot_area_station_m2,
                 radiation_temperature_k=radiation_result.radiation_temperature_k,
                 gas_effective_emissivity=radiation_result.gas_effective_emissivity,
                 wall_emissivity=radiation_result.wall_emissivity,
@@ -1197,19 +2432,14 @@ def _solve_station_heat_balance(
             )
         q_station_w = q_conv_station_w + radiation_result.q_radiation_station_w
         coolant_temperature_out_new_k = _clamp_coolant_outlet_temperature(
-            coolant_temperature_in_k + q_station_w / max(coolant_mass_flow_kg_per_s * coolant_transport.properties.cp_j_per_kg_k, 1.0e-12),
+            coolant_temperature_in_k + q_station_w / max(coolant_mass_flow_kg_per_s * conductance_state.coolant_cp_j_per_kg_k, 1.0e-12),
             coolant_temperature_in_k,
             recovery_temperature_k,
         )
-        coolant_temperature_bulk_new_k = 0.5 * (coolant_temperature_in_k + coolant_temperature_out_new_k)
-        q_hot_w_per_m2 = q_station_w / max(station_geometry.hot_wall_area_m2, 1.0e-12)
-        wall_temperature_coolant_side_k = (
-            coolant_temperature_bulk_new_k + q_hot_w_per_m2 / max(coolant_transport.h_c_w_per_m2_k, 1.0e-12)
-        )
+        q_hot_w_per_m2 = q_station_w / max(conductance_state.hot_area_station_m2, 1.0e-12)
+        wall_temperature_coolant_side_k = coolant_temperature_bulk_k + q_station_w / max(conductance_state.g_coolant_w_per_k, 1.0e-12)
         wall_temperature_hot_gas_side_k = _clamp_hot_wall_temperature(
-            wall_temperature_coolant_side_k + (
-                q_hot_w_per_m2 * wall_thickness_m / max(wall_conductivity_w_per_m_k, 1.0e-12)
-            ),
+            wall_temperature_coolant_side_k + q_station_w * wall_resistance_k_per_w,
             recovery_temperature_k,
             coolant_temperature_in_k,
         )
@@ -1220,10 +2450,11 @@ def _solve_station_heat_balance(
         )
 
         last_solution = _StationHeatBalanceResult(
-            h_g_w_per_m2_k=h_g_w_per_m2_k,
-            h_c_w_per_m2_k=coolant_transport.h_c_w_per_m2_k,
+            h_g_w_per_m2_k=conductance_state.h_g_station_w_per_m2_k,
+            h_c_w_per_m2_k=conductance_state.h_c_station_w_per_m2_k,
+            recovery_temperature_k=conductance_state.recovery_temperature_k,
             coolant_temperature_out_k=coolant_temperature_out_new_k,
-            coolant_temperature_bulk_k=coolant_temperature_bulk_new_k,
+            coolant_temperature_bulk_k=coolant_temperature_bulk_k,
             q_station_w=q_station_w,
             q_hot_w_per_m2=q_hot_w_per_m2,
             q_conv_w_per_m2=q_conv_w_per_m2,
@@ -1233,6 +2464,8 @@ def _solve_station_heat_balance(
             wall_temperature_coolant_side_k=wall_temperature_coolant_side_k,
             wall_temperature_hot_gas_side_k=wall_temperature_hot_gas_side_k,
             wall_delta_t_k=wall_delta_t_k,
+            coolant_bulk_temperature_reference_label=coolant_transport.bulk_temperature_reference_label,
+            coolant_bulk_temperature_reference_reason=coolant_transport.bulk_temperature_reference_reason,
             radiation_temperature_k=radiation_result.radiation_temperature_k,
             gas_effective_emissivity=radiation_result.gas_effective_emissivity,
             wall_emissivity=radiation_result.wall_emissivity,
@@ -1240,25 +2473,45 @@ def _solve_station_heat_balance(
             radiation_model_note=radiation_result.model_note,
             participating_species_mode=radiation_result.participating_species_mode,
             participating_species_used=radiation_result.participating_species_used,
-            reynolds_coolant=coolant_transport.reynolds_number,
-            prandtl_coolant=coolant_transport.prandtl_number,
-            coolant_cp_j_per_kg_k=coolant_transport.properties.cp_j_per_kg_k,
-            coolant_viscosity_pa_s=coolant_transport.properties.viscosity_pa_s,
-            nusselt_coolant=coolant_transport.nusselt_number,
-            friction_factor=coolant_transport.friction_factor,
-            pressure_drop_station_pa=coolant_transport.pressure_drop_total_pa,
+            reynolds_coolant=conductance_state.reynolds_station,
+            prandtl_coolant=conductance_state.prandtl_station,
+            coolant_cp_j_per_kg_k=conductance_state.coolant_cp_j_per_kg_k,
+            coolant_viscosity_pa_s=conductance_state.coolant_viscosity_pa_s,
+            nusselt_coolant=conductance_state.nusselt_station,
+            nusselt_coolant_method=conductance_state.nusselt_method,
+            nusselt_dittus_boelter=conductance_state.nusselt_dittus_boelter,
+            nusselt_sieder_tate=conductance_state.nusselt_sieder_tate,
+            nusselt_gnielinski=conductance_state.nusselt_gnielinski,
+            nusselt_spread_fraction=conductance_state.nusselt_spread_fraction,
+            friction_factor=conductance_state.friction_factor,
+            h_c_dittus_boelter_w_per_m2_k=conductance_state.h_c_dittus_boelter_w_per_m2_k,
+            h_c_sieder_tate_w_per_m2_k=conductance_state.h_c_sieder_tate_w_per_m2_k,
+            h_c_gnielinski_w_per_m2_k=conductance_state.h_c_gnielinski_w_per_m2_k,
+            coolant_wall_viscosity_pa_s=conductance_state.coolant_wall_viscosity_pa_s,
+            sieder_tate_viscosity_ratio=conductance_state.sieder_tate_viscosity_ratio,
+            sieder_tate_correction_factor=conductance_state.sieder_tate_correction_factor,
+            gas_conductance_w_per_k=conductance_state.g_gas_w_per_k,
+            coolant_conductance_w_per_k=conductance_state.g_coolant_w_per_k,
+            gas_resistance_k_per_w=gas_resistance_k_per_w,
+            wall_resistance_k_per_w=wall_resistance_k_per_w,
+            coolant_resistance_k_per_w=coolant_resistance_k_per_w,
+            coolant_flow_area_m2=conductance_state.flow_area_station_m2,
+            coolant_wall_area_m2=conductance_state.coolant_area_station_m2,
+            conductance_rule_label=conductance_state.conductance_rule_label,
+            solver_scheme_label=conductance_state.integration_scheme_label,
+            pressure_drop_station_pa=conductance_state.pressure_drop_station_pa,
             wall_material_properties=wall_material_properties,
             iterations=iteration + 1,
             converged=False,
             residual_k=residual_k,
-            status_notes=radiation_result.status_notes,
+            status_notes=tuple(conductance_state.notes) + radiation_result.status_notes,
         )
 
         if residual_k < solver_settings.station_tolerance:
             return _finalize_station_solution(
                 last_solution,
                 coolant_transport,
-                gas_side_properties.throat_curvature_mode,
+                representative_gas_side_properties.throat_curvature_mode,
                 converged=True,
             )
 
@@ -1283,7 +2536,7 @@ def _solve_station_heat_balance(
     return _finalize_station_solution(
         last_solution,
         last_coolant_transport,
-        gas_side_properties.throat_curvature_mode,
+        representative_gas_side_properties.throat_curvature_mode,
         converged=False,
     )
 
@@ -1300,10 +2553,28 @@ def _bartz_gas_side_heat_transfer_coefficient(
     better steady-state hot-gas-side trend than the older boundary-layer-thick-
     ness placeholder. The implementation reuses existing CEA outputs: `Taw`,
     `cp`, `mu`, `Pr`, `gamma`, `M`, `c*` and the current geometry areas.
+
+    TODO: add Ievlev/Ivlev as a future hot-gas-side h_g alternative after
+    verifying the exact formula, variable definitions and validity range.
+    It should not be mixed into the coolant-side Nu_c comparison path.
     """
 
+    return _bartz_gas_side_heat_transfer_coefficient_for_area(
+        bundle,
+        sample.area_m2,
+        gas_side_properties,
+        wall_temperature_k,
+    )
+
+
+def _bartz_gas_side_heat_transfer_coefficient_for_area(
+    bundle: ExportBundle,
+    local_area_m2: float,
+    gas_side_properties: _GasSideProperties,
+    wall_temperature_k: float,
+) -> float:
     throat_diameter_m = 2.0 * max(bundle.geometry.throat_radius_m, 1.0e-12)
-    local_area_ratio = max(sample.area_m2 / max(bundle.geometry.throat_area_m2, 1.0e-12), 1.0)
+    local_area_ratio = max(local_area_m2 / max(bundle.geometry.throat_area_m2, 1.0e-12), 1.0)
     throat_curvature_radius_m = max(gas_side_properties.throat_curvature_radius_m, 1.0e-12)
     chamber_pressure_over_cstar = (
         max(bundle.inputs.chamber_pressure_pa, 1.0)
@@ -1742,6 +3013,11 @@ def _evaluate_coolant_transport(
     coolant_temperature_bulk_k: float,
     local_pressure_estimate_pa: float | None,
     coolant_roughness_m: float,
+    *,
+    coolant_wall_temperature_k: float | None = None,
+    primary_coolant_nusselt_method: CoolantNusseltMethod = CoolantNusseltMethod.GNIELINSKI,
+    coolant_bulk_temperature_reference_label: str = "iterated station mean",
+    coolant_bulk_temperature_reference_reason: str = "T_b,c reference: iterated station mean of coolant inlet and outlet",
 ) -> _CoolantTransportState:
     """Evaluate the coolant-side transport state from the current station guess."""
 
@@ -1755,16 +3031,61 @@ def _evaluate_coolant_transport(
         / max(coolant_state.viscosity_pa_s, 1.0e-12)
     )
     prandtl_number = _coolant_prandtl_number(coolant_state)
-    nusselt_number, coolant_regime_label, coolant_notes = _coolant_nusselt_number(
-        reynolds_number,
-        prandtl_number,
-    )
-    h_c_w_per_m2_k = nusselt_number * coolant_state.thermal_conductivity_w_per_m_k / hydraulic_diameter_m
     friction_factor, friction_regime_label, friction_notes = _friction_factor(
         reynolds_number,
         coolant_roughness_m,
         hydraulic_diameter_m,
     )
+    wall_viscosity_pa_s: float | None = None
+    wall_property_notes: list[str] = []
+    if coolant_wall_temperature_k is not None and coolant_wall_temperature_k > 0.0:
+        coolant_wall_state = get_coolant_properties(
+            coolant_type,
+            coolant_wall_temperature_k,
+            local_pressure_estimate_pa,
+        )
+        wall_viscosity_pa_s = coolant_wall_state.viscosity_pa_s
+        wall_property_notes.extend(_split_note_string(coolant_wall_state.note))
+    nusselt_result = _coolant_nusselt_correlations(
+        reynolds_number,
+        prandtl_number,
+        friction_factor,
+        mu_bulk_pa_s=coolant_state.viscosity_pa_s,
+        mu_wall_pa_s=wall_viscosity_pa_s,
+        method=primary_coolant_nusselt_method,
+    )
+    h_c_w_per_m2_k = (
+        nusselt_result.selected_nusselt
+        * coolant_state.thermal_conductivity_w_per_m_k
+        / hydraulic_diameter_m
+    )
+    h_c_db = _nusselt_to_heat_transfer_coefficient(
+        nusselt_result.dittus_boelter,
+        coolant_state.thermal_conductivity_w_per_m_k,
+        hydraulic_diameter_m,
+    )
+    h_c_st = _nusselt_to_heat_transfer_coefficient(
+        nusselt_result.sieder_tate,
+        coolant_state.thermal_conductivity_w_per_m_k,
+        hydraulic_diameter_m,
+    )
+    h_c_gn = _nusselt_to_heat_transfer_coefficient(
+        nusselt_result.gnielinski,
+        coolant_state.thermal_conductivity_w_per_m_k,
+        hydraulic_diameter_m,
+    )
+    transport_notes = [
+        coolant_bulk_temperature_reference_reason,
+        *_split_note_string(coolant_state.note),
+        *wall_property_notes,
+        *nusselt_result.notes,
+        *(() if not nusselt_result.validity_note else (nusselt_result.validity_note,)),
+        *friction_notes,
+    ]
+    if h_c_w_per_m2_k > 200_000.0:
+        transport_notes.append(
+            "coolant h_c very high for MVP annulus screening; validate with refined channel model"
+        )
     pressure_drop_friction_pa = friction_factor * (
         station_length_m / hydraulic_diameter_m
     ) * 0.5 * density_kg_per_m3 * velocity_m_per_s**2
@@ -1779,46 +3100,192 @@ def _evaluate_coolant_transport(
         velocity_m_per_s=velocity_m_per_s,
         prandtl_number=prandtl_number,
         reynolds_number=reynolds_number,
-        nusselt_number=nusselt_number,
+        nusselt_number=nusselt_result.selected_nusselt,
+        nusselt_method=nusselt_result.selected_method.value,
+        nusselt_dittus_boelter=nusselt_result.dittus_boelter,
+        nusselt_sieder_tate=nusselt_result.sieder_tate,
+        nusselt_gnielinski=nusselt_result.gnielinski,
+        nusselt_spread_fraction=nusselt_result.spread_fraction,
         h_c_w_per_m2_k=h_c_w_per_m2_k,
+        h_c_dittus_boelter_w_per_m2_k=h_c_db,
+        h_c_sieder_tate_w_per_m2_k=h_c_st,
+        h_c_gnielinski_w_per_m2_k=h_c_gn,
         friction_factor=friction_factor,
-        coolant_regime_label=coolant_regime_label,
+        coolant_regime_label=nusselt_result.regime_label,
         friction_regime_label=friction_regime_label,
         pressure_drop_friction_pa=pressure_drop_friction_pa,
         pressure_drop_minor_pa=pressure_drop_minor_pa,
         pressure_drop_acceleration_pa=pressure_drop_acceleration_pa,
         pressure_drop_total_pa=pressure_drop_friction_pa + pressure_drop_minor_pa + pressure_drop_acceleration_pa,
-        notes=(
-            *_split_note_string(coolant_state.note),
-            *coolant_notes,
-            *friction_notes,
-        ),
+        bulk_temperature_reference_label=coolant_bulk_temperature_reference_label,
+        bulk_temperature_reference_reason=coolant_bulk_temperature_reference_reason,
+        wall_viscosity_pa_s=wall_viscosity_pa_s,
+        sieder_tate_viscosity_ratio=nusselt_result.sieder_tate_viscosity_ratio,
+        sieder_tate_correction_factor=nusselt_result.sieder_tate_correction_factor,
+        notes=tuple(transport_notes),
     )
 
 
-def _coolant_nusselt_number(
+def _coolant_nusselt_correlations(
     reynolds_number: float,
     prandtl_number: float,
-) -> tuple[float, str, tuple[str, ...]]:
-    """Return Nu with explicit regime labeling for the annulus MVP."""
+    friction_factor: float | None,
+    *,
+    mu_bulk_pa_s: float,
+    mu_wall_pa_s: float | None,
+    method: CoolantNusseltMethod,
+) -> _CoolantNusseltCorrelationResult:
+    """Return selected and background Nu_c values for the current station."""
 
     if reynolds_number <= 0.0:
-        return 0.0, "invalid", ("invalid coolant Reynolds number",)
+        return _CoolantNusseltCorrelationResult(
+            selected_method=method,
+            selected_nusselt=0.0,
+            dittus_boelter=None,
+            sieder_tate=None,
+            gnielinski=None,
+            spread_fraction=None,
+            regime_label="invalid",
+            validity_note="invalid coolant Reynolds number",
+            sieder_tate_viscosity_ratio=None,
+            sieder_tate_correction_factor=None,
+            notes=("invalid coolant Reynolds number",),
+        )
 
+    notes: list[str] = []
+    validity_notes: list[str] = []
     laminar_nusselt = 3.66
-    turbulent_nusselt = 0.023 * reynolds_number**0.8 * max(prandtl_number, 1.0e-12) ** 0.4
+    prandtl_positive = max(prandtl_number, 1.0e-12)
+    sieder_tate_viscosity_ratio: float | None = None
+    sieder_tate_correction_factor: float | None = None
+
+    db_nusselt = 0.023 * reynolds_number**0.8 * prandtl_positive**0.4
+    if reynolds_number < _COOLANT_TURBULENT_RE_MIN or not 0.7 <= prandtl_number <= 160.0:
+        validity_notes.append(
+            "coolant Nu validity: Dittus-Boelter guidance is Re >= 1e4 and 0.7 <= Pr <= 160"
+        )
+
+    st_nusselt: float | None = None
+    if mu_wall_pa_s is None or mu_wall_pa_s <= 0.0:
+        notes.append("wall viscosity missing for Sieder-Tate")
+    else:
+        sieder_tate_viscosity_ratio = mu_bulk_pa_s / max(mu_wall_pa_s, 1.0e-12)
+        clamped_ratio = min(max(sieder_tate_viscosity_ratio, 0.05), 20.0)
+        if not math.isclose(sieder_tate_viscosity_ratio, clamped_ratio):
+            notes.append("Sieder-Tate viscosity ratio clamped")
+        sieder_tate_correction_factor = clamped_ratio**0.14
+        st_nusselt = 0.027 * reynolds_number**0.8 * prandtl_positive ** (1.0 / 3.0) * sieder_tate_correction_factor
+        if reynolds_number < _COOLANT_TURBULENT_RE_MIN or not 0.7 <= prandtl_number <= 16_700.0:
+            validity_notes.append(
+                "coolant Nu validity: Sieder-Tate guidance is Re >= 1e4 and 0.7 <= Pr <= 16700"
+            )
+
+    gn_nusselt: float | None = None
+    if friction_factor is None or friction_factor <= 0.0 or reynolds_number <= 1_000.0:
+        notes.append("Gnielinski unavailable: invalid friction factor or Reynolds number")
+    else:
+        denominator = 1.0 + 12.7 * math.sqrt(friction_factor / 8.0) * (prandtl_positive ** (2.0 / 3.0) - 1.0)
+        if denominator > 0.0:
+            gn_nusselt = ((friction_factor / 8.0) * (reynolds_number - 1_000.0) * prandtl_positive) / denominator
+        if reynolds_number < _GNIELINSKI_RE_MIN or reynolds_number > 5.0e6 or not 0.5 <= prandtl_number <= 2_000.0:
+            validity_notes.append(
+                "coolant Nu validity: Gnielinski guidance is 3e3 <= Re <= 5e6 and 0.5 <= Pr <= 2000"
+            )
+
+    available_turbulent = {
+        CoolantNusseltMethod.DITTUS_BOELTER: db_nusselt,
+        CoolantNusseltMethod.SIEDER_TATE: st_nusselt,
+        CoolantNusseltMethod.GNIELINSKI: gn_nusselt,
+    }
+    selected_method = method
+    selected_turbulent = available_turbulent.get(method)
+    if selected_turbulent is None:
+        for fallback_method in (
+            CoolantNusseltMethod.GNIELINSKI,
+            CoolantNusseltMethod.SIEDER_TATE,
+            CoolantNusseltMethod.DITTUS_BOELTER,
+        ):
+            fallback_value = available_turbulent.get(fallback_method)
+            if fallback_value is not None:
+                selected_method = fallback_method
+                selected_turbulent = fallback_value
+                if fallback_method is not method:
+                    notes.append(
+                        f"coolant Nu method fallback: requested {method.value}, using {fallback_method.value}"
+                    )
+                break
+
+    regime_label = "turbulent"
+    selected_nusselt = selected_turbulent if selected_turbulent is not None else laminar_nusselt
     if reynolds_number < _COOLANT_LAMINAR_RE_MAX:
-        return laminar_nusselt, "laminar", ()
-    if reynolds_number < _COOLANT_TURBULENT_RE_MIN:
+        regime_label = "laminar"
+        selected_nusselt = laminar_nusselt
+        selected_method = method
+        notes.append("laminar annulus fallback Nu=3.66; turbulent Nu correlations are out of range")
+        db_nusselt = None
+        st_nusselt = None
+        gn_nusselt = None
+    elif reynolds_number < _COOLANT_TURBULENT_RE_MIN:
+        regime_label = "transitional"
         interpolation = (reynolds_number - _COOLANT_LAMINAR_RE_MAX) / (
             _COOLANT_TURBULENT_RE_MIN - _COOLANT_LAMINAR_RE_MAX
         )
-        return (
-            _lerp(laminar_nusselt, turbulent_nusselt, interpolation),
-            "transitional",
-            ("transition regime: coolant Nu correlation uncertain",),
-        )
-    return turbulent_nusselt, "turbulent", ()
+        selected_nusselt = _lerp(laminar_nusselt, selected_turbulent or laminar_nusselt, interpolation)
+        notes.append("transition regime: coolant Nu correlation uncertain")
+
+    available_values = [
+        value for value in (db_nusselt, st_nusselt, gn_nusselt) if value is not None and value > 0.0
+    ]
+    spread_fraction = None
+    if len(available_values) >= 2 and selected_nusselt > 0.0:
+        spread_fraction = (max(available_values) - min(available_values)) / selected_nusselt
+        if spread_fraction > 0.30:
+            notes.append("coolant Nu correlation spread > 30%; thermal result is correlation-sensitive")
+
+    if reynolds_number > 1.0e6:
+        notes.append("coolant Re very high; Nu correlation range should be checked")
+    if selected_nusselt > 3_000.0:
+        notes.append("coolant Nu very high; verify geometry/properties/correlation")
+
+    validity_note = ""
+    if selected_method is CoolantNusseltMethod.DITTUS_BOELTER and (
+        reynolds_number < _COOLANT_TURBULENT_RE_MIN or not 0.7 <= prandtl_number <= 160.0
+    ):
+        validity_note = "coolant Nu validity: selected Dittus-Boelter station is outside suggested guidance"
+    elif selected_method is CoolantNusseltMethod.SIEDER_TATE and (
+        st_nusselt is None or reynolds_number < _COOLANT_TURBULENT_RE_MIN or not 0.7 <= prandtl_number <= 16_700.0
+    ):
+        validity_note = "coolant Nu validity: selected Sieder-Tate station is outside suggested guidance"
+    elif selected_method is CoolantNusseltMethod.GNIELINSKI and (
+        gn_nusselt is None or reynolds_number < _GNIELINSKI_RE_MIN or reynolds_number > 5.0e6 or not 0.5 <= prandtl_number <= 2_000.0
+    ):
+        validity_note = "coolant Nu validity: selected Gnielinski station is outside suggested guidance"
+    elif validity_notes:
+        validity_note = validity_notes[0]
+
+    return _CoolantNusseltCorrelationResult(
+        selected_method=selected_method,
+        selected_nusselt=selected_nusselt,
+        dittus_boelter=db_nusselt,
+        sieder_tate=st_nusselt,
+        gnielinski=gn_nusselt,
+        spread_fraction=spread_fraction,
+        regime_label=regime_label,
+        validity_note=validity_note,
+        sieder_tate_viscosity_ratio=sieder_tate_viscosity_ratio,
+        sieder_tate_correction_factor=sieder_tate_correction_factor,
+        notes=tuple(notes),
+    )
+
+
+def _nusselt_to_heat_transfer_coefficient(
+    nusselt_number: float | None,
+    thermal_conductivity_w_per_m_k: float,
+    hydraulic_diameter_m: float,
+) -> float | None:
+    if nusselt_number is None:
+        return None
+    return nusselt_number * thermal_conductivity_w_per_m_k / max(hydraulic_diameter_m, 1.0e-12)
 
 
 def _overall_heat_transfer_w_per_m2_k(
@@ -1838,14 +3305,13 @@ def _overall_heat_transfer_w_per_m2_k(
 def _solve_station_temperature_outlet(
     recovery_temperature_k: float,
     coolant_temperature_in_k: float,
-    overall_heat_transfer_w_per_m2_k: float,
-    hot_wall_area_m2: float,
+    station_conductance_w_per_k: float,
     coolant_mass_flow_kg_per_s: float,
     coolant_cp_j_per_kg_k: float,
     solver_settings: SolverSettings,
 ) -> float:
     capacity_rate = max(coolant_mass_flow_kg_per_s * coolant_cp_j_per_kg_k, 1.0e-12)
-    ntu = overall_heat_transfer_w_per_m2_k * hot_wall_area_m2 / capacity_rate
+    ntu = station_conductance_w_per_k / capacity_rate
 
     if solver_settings.solver_type is ThermalSolverType.FORWARD_EULER:
         return coolant_temperature_in_k + ntu * (recovery_temperature_k - coolant_temperature_in_k)
@@ -1859,6 +3325,9 @@ def _solve_station_temperature_outlet(
         numerator = coolant_temperature_in_k + ntu * (recovery_temperature_k - 0.5 * coolant_temperature_in_k)
         denominator = max(1.0 + 0.5 * ntu, 1.0e-12)
         return numerator / denominator
+
+    if solver_settings.solver_type is ThermalSolverType.SIMPSON_CONDUCTANCE:
+        return recovery_temperature_k - (recovery_temperature_k - coolant_temperature_in_k) * math.exp(-ntu)
 
     # The NTU / exponential station model is the default because it gives a
     # compact closed-form station update without implying full transient fidelity.
@@ -1923,6 +3392,8 @@ def _finalize_station_solution(
     raw_status_notes = [
         f"gas-side h_g: Bartz ({throat_curvature_mode.value} Rc,t)",
         f"coolant regime: {coolant_transport.coolant_regime_label}",
+        f"coolant Nu method: {coolant_transport.nusselt_method}",
+        coolant_transport.bulk_temperature_reference_reason,
     ]
     if coolant_transport.friction_regime_label != coolant_transport.coolant_regime_label:
         raw_status_notes.append(f"coolant friction regime: {coolant_transport.friction_regime_label}")
@@ -1942,6 +3413,7 @@ def _finalize_station_solution(
     return _StationHeatBalanceResult(
         h_g_w_per_m2_k=solution.h_g_w_per_m2_k,
         h_c_w_per_m2_k=solution.h_c_w_per_m2_k,
+        recovery_temperature_k=solution.recovery_temperature_k,
         coolant_temperature_out_k=solution.coolant_temperature_out_k,
         coolant_temperature_bulk_k=solution.coolant_temperature_bulk_k,
         q_station_w=solution.q_station_w,
@@ -1953,6 +3425,8 @@ def _finalize_station_solution(
         wall_temperature_coolant_side_k=solution.wall_temperature_coolant_side_k,
         wall_temperature_hot_gas_side_k=solution.wall_temperature_hot_gas_side_k,
         wall_delta_t_k=solution.wall_delta_t_k,
+        coolant_bulk_temperature_reference_label=solution.coolant_bulk_temperature_reference_label,
+        coolant_bulk_temperature_reference_reason=solution.coolant_bulk_temperature_reference_reason,
         radiation_temperature_k=solution.radiation_temperature_k,
         gas_effective_emissivity=solution.gas_effective_emissivity,
         wall_emissivity=solution.wall_emissivity,
@@ -1965,7 +3439,27 @@ def _finalize_station_solution(
         coolant_cp_j_per_kg_k=solution.coolant_cp_j_per_kg_k,
         coolant_viscosity_pa_s=solution.coolant_viscosity_pa_s,
         nusselt_coolant=solution.nusselt_coolant,
+        nusselt_coolant_method=solution.nusselt_coolant_method,
+        nusselt_dittus_boelter=solution.nusselt_dittus_boelter,
+        nusselt_sieder_tate=solution.nusselt_sieder_tate,
+        nusselt_gnielinski=solution.nusselt_gnielinski,
+        nusselt_spread_fraction=solution.nusselt_spread_fraction,
         friction_factor=solution.friction_factor,
+        h_c_dittus_boelter_w_per_m2_k=solution.h_c_dittus_boelter_w_per_m2_k,
+        h_c_sieder_tate_w_per_m2_k=solution.h_c_sieder_tate_w_per_m2_k,
+        h_c_gnielinski_w_per_m2_k=solution.h_c_gnielinski_w_per_m2_k,
+        coolant_wall_viscosity_pa_s=solution.coolant_wall_viscosity_pa_s,
+        sieder_tate_viscosity_ratio=solution.sieder_tate_viscosity_ratio,
+        sieder_tate_correction_factor=solution.sieder_tate_correction_factor,
+        gas_conductance_w_per_k=solution.gas_conductance_w_per_k,
+        coolant_conductance_w_per_k=solution.coolant_conductance_w_per_k,
+        gas_resistance_k_per_w=solution.gas_resistance_k_per_w,
+        wall_resistance_k_per_w=solution.wall_resistance_k_per_w,
+        coolant_resistance_k_per_w=solution.coolant_resistance_k_per_w,
+        coolant_flow_area_m2=solution.coolant_flow_area_m2,
+        coolant_wall_area_m2=solution.coolant_wall_area_m2,
+        conductance_rule_label=solution.conductance_rule_label,
+        solver_scheme_label=solution.solver_scheme_label,
         pressure_drop_station_pa=solution.pressure_drop_station_pa,
         wall_material_properties=solution.wall_material_properties,
         iterations=solution.iterations,
@@ -2492,9 +3986,10 @@ def _resolved_throat_curvature_radius_m(
 
 def _build_summary(
     stations: list[ThermalStationResult],
-    thermal_inputs: ThermalAnalysisInputs,
+    scenario: ThermalScenario,
     pressure_summary: _PressureSummary,
 ) -> ThermalAnalysisSummary:
+    thermal_inputs = scenario.global_conditions
     q_values = [station.q_station_w for station in stations if station.q_station_w is not None]
     p_drop_values = [station.pressure_drop_station_pa for station in stations if station.pressure_drop_station_pa is not None]
     twg_values = [
@@ -2548,6 +4043,12 @@ def _build_summary(
         for station in stations
         if station.closeout_material_strength_margin is not None
     ]
+    nusselt_spread_values = [
+        station.nusselt_spread_fraction
+        for station in stations
+        if station.nusselt_spread_fraction is not None
+    ]
+    scenario_summary = _thermal_scenario_summary_strings(scenario)
 
     total_heat_w = sum(q_values) if q_values else None
     total_radiation_heat_w = sum(q_radiation_values) if q_radiation_values else 0.0
@@ -2570,6 +4071,12 @@ def _build_summary(
     outside_range_count = sum(
         1 for station in stations if "outside table range" in station.status
     )
+    nusselt_validity_warning_count = sum(
+        1 for station in stations if "coolant Nu validity:" in station.status
+    )
+    high_h_c_count = sum(
+        1 for station in stations if "coolant h_c very high" in station.status
+    )
     coolant_property_source = _summary_source_label(stations, "coolant")
     material_property_source = _summary_source_label(stations, "material")
 
@@ -2591,10 +4098,22 @@ def _build_summary(
             "Preliminary placeholder only; the annulus MVP does not yet turn coolant enthalpy gain into an Isp benefit."
         ),
         pressure_mode_note=pressure_summary.note,
+        thermal_scenario_name=scenario.name,
+        primary_coolant_nusselt_method=thermal_inputs.primary_coolant_nusselt_method.value,
+        nusselt_comparison_enabled=scenario.solver_plan.run_parallel_nusselt_comparison,
+        active_mechanisms_summary=scenario_summary[0],
+        global_conditions_summary=scenario_summary[1],
+        station_condition_summary=scenario_summary[2],
         coolant_property_source=coolant_property_source,
         material_property_source=material_property_source,
         stations_with_property_warnings=property_warning_count,
         stations_outside_property_table_range=outside_range_count,
+        max_nusselt_spread_fraction=max(nusselt_spread_values) if nusselt_spread_values else None,
+        stations_with_large_nusselt_spread=sum(
+            1 for value in nusselt_spread_values if value > 0.30
+        ),
+        stations_outside_nusselt_validity=nusselt_validity_warning_count,
+        stations_with_high_h_c=high_h_c_count,
         total_radiation_heat_w=total_radiation_heat_w,
         max_radiation_heat_flux_w_per_m2=max(q_radiation_flux_values) if q_radiation_flux_values else 0.0,
         radiation_fraction_of_total_heat=(
@@ -2616,6 +4135,35 @@ def _build_summary(
         ),
         closeout_min_material_strength_margin=min(closeout_margin_values) if closeout_margin_values else None,
     )
+
+
+def _thermal_scenario_summary_strings(scenario: ThermalScenario) -> tuple[str, str, str]:
+    """Return compact readable summary lines for the modular thermal scenario."""
+
+    thermal_inputs = scenario.global_conditions
+    active_mechanisms = [
+        mechanism
+        for mechanism in scenario.mechanisms
+        if mechanism.enabled and mechanism.mechanism_type not in {
+            ThermalMechanismType.FILM_COOLING_FUTURE,
+            ThermalMechanismType.CHANNEL_RIB_NETWORK_FUTURE,
+        }
+    ]
+    active_mechanisms_summary = ", ".join(
+        mechanism.mechanism_type.value for mechanism in active_mechanisms
+    ) or "none"
+    global_conditions_summary = (
+        f"Coolant {thermal_inputs.coolant_type} enters at {thermal_inputs.coolant_inlet_temperature_k:.2f} K, "
+        f"flow path {thermal_inputs.flow_direction.value}, pressure mode {thermal_inputs.solver_settings.pressure_mode.value}, "
+        f"primary Nu_c {thermal_inputs.primary_coolant_nusselt_method.value}, "
+        f"solver scheme {_solver_scheme_label(thermal_inputs.solver_settings.solver_type)}"
+    )
+    station_condition_summary = ", ".join(
+        condition.condition_type.value
+        for condition in scenario.conditions
+        if condition.enabled
+    ) or "full contour"
+    return active_mechanisms_summary, global_conditions_summary, station_condition_summary
 
 
 def _lerp(start: float, end: float, fraction: float) -> float:
