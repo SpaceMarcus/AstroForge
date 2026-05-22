@@ -33,6 +33,7 @@ from engine.gui.project_panels import (
     ProjectManagementPanel,
     ScrollableContentFrame,
 )
+from engine.gui.r_network_builder_page import RNetworkBuilderPage
 from engine.gui.result_panel import (
     ComparisonPanel,
     GeometryDetailsPanel,
@@ -67,9 +68,14 @@ from engine.project_state import (
     set_flow_case_assessment,
 )
 from engine.thermal_analysis import (
+    CommittedThermalNetwork,
     ThermalAnalysisInputs,
     ThermalAnalysisResult,
+    ThermalNetworkBuildResult,
+    committed_thermal_network_is_stale,
+    create_committed_thermal_network,
     default_thermal_analysis_inputs,
+    thermal_network_build_is_stale,
 )
 from engine.unit_system import UnitPreset, UNIT_PRESET_LABELS, format_quantity
 from engine.utils.validation import InputValidationError
@@ -110,6 +116,19 @@ class ApplicationController(Protocol):
         self,
         bundle: ExportBundle,
         thermal_inputs: ThermalAnalysisInputs,
+    ) -> ThermalAnalysisResult: ...
+
+    def build_thermal_network(
+        self,
+        bundle: ExportBundle,
+        thermal_inputs: ThermalAnalysisInputs,
+    ) -> ThermalNetworkBuildResult: ...
+
+    def run_thermal_analysis_from_network(
+        self,
+        bundle: ExportBundle,
+        thermal_inputs: ThermalAnalysisInputs,
+        network_build: ThermalNetworkBuildResult,
     ) -> ThermalAnalysisResult: ...
 
 
@@ -159,6 +178,8 @@ class MainWindow(tk.Tk):
         self._preview_liner_mass_kg: float | None = None
         self._thermal_analysis_inputs = default_thermal_analysis_inputs()
         self._thermal_analysis_result: ThermalAnalysisResult | None = None
+        self._current_r_network_draft: ThermalNetworkBuildResult | None = None
+        self._committed_r_network: CommittedThermalNetwork | None = None
         self._thermal_auto_seeded_coolant_mass_flow_kg_per_s = (
             self._thermal_analysis_inputs.coolant_mass_flow_kg_per_s
         )
@@ -356,11 +377,25 @@ class MainWindow(tk.Tk):
         geometry_tab.columnconfigure(0, weight=1)
         geometry_tab.rowconfigure(0, weight=1)
         notebook.add(geometry_tab, text="Geometry Details")
+        self._geometry_tab = geometry_tab
+
+        injector_tab = ttk.Frame(notebook, padding=8)
+        injector_tab.columnconfigure(0, weight=1)
+        injector_tab.rowconfigure(0, weight=1)
+        notebook.add(injector_tab, text="Injector Head Designer")
+        self._injector_tab = injector_tab
+
+        r_network_tab = ttk.Frame(notebook, padding=8)
+        r_network_tab.columnconfigure(0, weight=1)
+        r_network_tab.rowconfigure(0, weight=1)
+        notebook.add(r_network_tab, text="R-Network Builder")
+        self._r_network_tab = r_network_tab
 
         thermo_tab = ttk.Frame(notebook, padding=8)
         thermo_tab.columnconfigure(0, weight=1)
         thermo_tab.rowconfigure(0, weight=1)
         notebook.add(thermo_tab, text="Thermal Analysis")
+        self._thermo_tab = thermo_tab
 
         comparison_tab = ttk.Frame(notebook, padding=8)
         comparison_tab.columnconfigure(0, weight=1)
@@ -377,6 +412,8 @@ class MainWindow(tk.Tk):
         self._build_initial_design_tab(initial_design_tab)
         self._build_current_design_tab(current_design_tab)
         self._build_geometry_tab(geometry_tab)
+        self._build_injector_head_tab(injector_tab)
+        self._build_r_network_builder_tab(r_network_tab)
         self._build_thermo_tab(thermo_tab)
         self._build_comparison_tab(comparison_tab)
         self._build_report_tab(report_tab)
@@ -598,6 +635,49 @@ class MainWindow(tk.Tk):
             command=self.reset_error,
         ).grid(row=0, column=2, sticky="ew", padx=(6, 0))
 
+    def _build_injector_head_tab(self, master: ttk.Frame) -> None:
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(0, weight=1)
+
+        content = ScrollableContentFrame(master)
+        content.grid(row=0, column=0, sticky="nsew")
+        content.content.columnconfigure(0, weight=1)
+
+        frame = ttk.LabelFrame(content.content, text="Injector Head Designer", padding=16)
+        frame.grid(row=0, column=0, sticky="ew")
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(frame, text="planned", foreground="#244a6d").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            frame,
+            text=(
+                "This tab will later contain injector/head-end layout, pressure drop, element patterning, "
+                "manifold assumptions and coupling to chamber boundary conditions. It is currently a placeholder."
+            ),
+            wraplength=980,
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        ttk.Label(
+            frame,
+            text=(
+                "Future hooks: injector pressure drop, fuel/oxidizer element layout, manifold/head-end volume, "
+                "film or differential injection placeholders, and coupling to local mixture ratio and gas-side boundary conditions."
+            ),
+            wraplength=980,
+            justify="left",
+            foreground="#667381",
+        ).grid(row=2, column=0, sticky="ew", pady=(8, 0))
+
+    def _build_r_network_builder_tab(self, master: ttk.Frame) -> None:
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(0, weight=1)
+
+        self._r_network_builder_page = RNetworkBuilderPage(master, unit_preset=self._unit_preset)
+        self._r_network_builder_page.grid(row=0, column=0, sticky="nsew")
+        self._r_network_builder_page.bind_build_network(self.build_thermal_network)
+        self._r_network_builder_page.bind_commit_network(self.commit_r_network)
+        self._r_network_builder_page.bind_reset(self.reset_thermal_analysis_inputs)
+        self._r_network_builder_page.bind_go_to_thermal(self.go_to_thermal_analysis_tab)
+
     def _build_sweep_section(
         self,
         master: ttk.Frame,
@@ -666,6 +746,7 @@ class MainWindow(tk.Tk):
         self._thermal_analysis_page.grid(row=0, column=0, sticky="nsew")
         self._thermal_analysis_page.bind_calculate(self.calculate_thermal_analysis)
         self._thermal_analysis_page.bind_reset(self.reset_thermal_analysis_inputs)
+        self._thermal_analysis_page.bind_go_to_r_network_builder(self.go_to_r_network_builder_tab)
 
     def _build_comparison_tab(self, master: ttk.Frame) -> None:
         self._comparison_panel = ComparisonPanel(master, unit_preset=self._unit_preset)
@@ -703,6 +784,12 @@ class MainWindow(tk.Tk):
 
         self._property_tables_report_panel = PropertyTablesReportPanel(content.content)
         self._property_tables_report_panel.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+
+    def go_to_r_network_builder_tab(self) -> None:
+        self._notebook.select(self._r_network_tab)
+
+    def go_to_thermal_analysis_tab(self) -> None:
+        self._notebook.select(self._thermo_tab)
 
     def new_case(self) -> None:
         """Reset the current window to a fresh default state."""
@@ -757,9 +844,12 @@ class MainWindow(tk.Tk):
         self._input_panel.clear_committed_divergent_loss()
         self._thermal_analysis_inputs = default_thermal_analysis_inputs(None, fuel_name=example.fuel)
         self._thermal_analysis_result = None
+        self._current_r_network_draft = None
+        self._committed_r_network = None
         self._update_thermal_auto_seed_tracking(self._thermal_analysis_inputs)
-        self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
+        self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
         self._thermal_analysis_page.clear_result()
+        self._r_network_builder_page.clear_draft_network_build_result()
         self._seed_geometry_sandbox_from_inputs(example)
         self._refresh_flow_case_assessment(example)
         self._selected_of_var.set(f"{example.mixture_ratio:.4f}")
@@ -954,7 +1044,7 @@ class MainWindow(tk.Tk):
         )
 
     def calculate_thermal_analysis(self) -> None:
-        """Run the annulus-cooling reference model on the committed Current Design."""
+        """Run the annulus-cooling reference model from the built R-network."""
 
         self.reset_error()
         analysis_bundle = self._current_bundle
@@ -964,8 +1054,27 @@ class MainWindow(tk.Tk):
             self._status_var.set("Thermal Analysis not possible yet.")
             return
         try:
-            thermal_inputs = self._thermal_analysis_page.get_inputs()
-            result = self._controller.run_thermal_analysis(analysis_bundle, thermal_inputs)
+            thermal_inputs = self._r_network_builder_page.get_inputs()
+            committed_network = self._committed_r_network
+            if committed_network is None:
+                raise InputValidationError(["No committed R-Network available. Build and commit it before running Thermal Analysis."])
+            stale, stale_notes = committed_thermal_network_is_stale(
+                analysis_bundle,
+                thermal_inputs,
+                committed_network,
+            )
+            if stale:
+                committed_network.status = "stale"
+                self._thermal_analysis_page.set_committed_network(committed_network, stale_notes=stale_notes)
+                self._r_network_builder_page.set_committed_network(committed_network, stale_notes=stale_notes)
+                raise InputValidationError(
+                    ["Committed R-Network is stale. Rebuild and recommit before solving.", *stale_notes]
+                )
+            result = self._controller.run_thermal_analysis_from_network(
+                analysis_bundle,
+                thermal_inputs,
+                committed_network.network_build_result,
+            )
         except (InputValidationError, ThermochemistryBackendError, ValueError) as exc:
             self._error_var.set(str(exc))
             self._status_var.set("Thermal Analysis failed.")
@@ -981,6 +1090,86 @@ class MainWindow(tk.Tk):
         self._refresh_thermal_analysis_context()
         self._status_var.set("Thermal Analysis completed successfully.")
 
+    def build_thermal_network(self) -> None:
+        """Build the station-wise thermal R-network from the active annulus setup."""
+
+        self.reset_error()
+        analysis_bundle = self._current_bundle
+        guard_errors = self._committed_bundle_guard_errors(purpose="building the R-Network")
+        if guard_errors:
+            self._error_var.set("\n".join(guard_errors))
+            self._status_var.set("R-Network build not possible yet.")
+            return
+        try:
+            thermal_inputs = self._r_network_builder_page.get_inputs()
+            network_build = self._controller.build_thermal_network(
+                analysis_bundle,
+                thermal_inputs,
+            )
+        except (InputValidationError, ThermochemistryBackendError, ValueError) as exc:
+            self._error_var.set(str(exc))
+            self._status_var.set("R-Network build failed.")
+            return
+        except Exception as exc:  # pragma: no cover - GUI integration safeguard
+            self._error_var.set(f"Unexpected R-Network build error: {exc}")
+            self._status_var.set("R-Network build failed.")
+            return
+
+        self._thermal_analysis_inputs = thermal_inputs
+        self._current_r_network_draft = network_build
+        self._r_network_builder_page.set_draft_network_build_result(network_build)
+        self._refresh_thermal_analysis_context()
+        if network_build.status == "error":
+            self._error_var.set("\n".join(network_build.errors))
+            self._status_var.set("R-Network build completed with errors.")
+        elif network_build.status == "warning":
+            self._status_var.set("R-Network built with warnings. Review the preview before solving.")
+        else:
+            self._status_var.set("R-Network draft built successfully. Commit it before running Thermal Analysis.")
+
+    def commit_r_network(self) -> None:
+        """Commit the current draft R-Network so Thermal Analysis can consume it."""
+
+        self.reset_error()
+        analysis_bundle = self._current_bundle
+        guard_errors = self._committed_bundle_guard_errors(purpose="committing the R-Network")
+        if guard_errors:
+            self._error_var.set("\n".join(guard_errors))
+            self._status_var.set("R-Network commit not possible yet.")
+            return
+        draft_network = self._current_r_network_draft
+        if draft_network is None:
+            self._error_var.set("Build an R-Network draft before committing it.")
+            self._status_var.set("R-Network commit not possible yet.")
+            return
+        if draft_network.status == "error":
+            self._error_var.set("\n".join(draft_network.errors))
+            self._status_var.set("R-Network commit not possible yet.")
+            return
+        try:
+            thermal_inputs = self._r_network_builder_page.get_inputs()
+            stale, stale_notes = thermal_network_build_is_stale(
+                analysis_bundle,
+                thermal_inputs,
+                draft_network,
+            )
+            if stale:
+                self._r_network_builder_page.mark_draft_network_stale(stale_notes)
+                raise InputValidationError(["Draft R-Network is stale. Rebuild before committing.", *stale_notes])
+            self._committed_r_network = create_committed_thermal_network(
+                analysis_bundle,
+                thermal_inputs,
+                draft_network,
+                notes=draft_network.warnings,
+            )
+        except (InputValidationError, ThermochemistryBackendError, ValueError) as exc:
+            self._error_var.set(str(exc))
+            self._status_var.set("R-Network commit failed.")
+            return
+        self._thermal_analysis_inputs = thermal_inputs
+        self._refresh_thermal_analysis_context()
+        self._status_var.set("R-Network committed. Thermal Analysis can now use the committed network.")
+
     def reset_thermal_analysis_inputs(self) -> None:
         """Reset thermal-reference inputs back to the current design defaults."""
 
@@ -990,9 +1179,11 @@ class MainWindow(tk.Tk):
             fuel_name=None if current_inputs is None else current_inputs.fuel,
         )
         self._thermal_analysis_result = None
+        self._current_r_network_draft = None
         self._update_thermal_auto_seed_tracking(self._thermal_analysis_inputs)
-        self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
+        self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
         self._thermal_analysis_page.clear_result()
+        self._r_network_builder_page.clear_draft_network_build_result()
         self._refresh_thermal_analysis_context()
         self._status_var.set("Thermal Analysis inputs were reset to their reference defaults.")
 
@@ -1725,6 +1916,7 @@ class MainWindow(tk.Tk):
         self._comparison_panel.set_unit_preset(unit_preset)
         self._current_design_page.set_unit_preset(unit_preset)
         self._of_sweep_plot.set_unit_preset(unit_preset)
+        self._r_network_builder_page.set_unit_preset(unit_preset)
         self._thermal_analysis_page.set_unit_preset(unit_preset)
         self._update_of_summary()
         if self._current_bundle is not None:
@@ -1980,7 +2172,18 @@ class MainWindow(tk.Tk):
                 push_inputs_to_page = True
 
             if push_inputs_to_page:
-                self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
+                self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+                self._r_network_builder_page.clear_draft_network_build_result()
+                self._current_r_network_draft = None
+        self._r_network_builder_page.update_design_context(
+            current_inputs=current_inputs,
+            current_bundle=analysis_bundle,
+            thermal_inputs=self._thermal_analysis_inputs,
+            design_status_label=design_status_label,
+            geometry_source_label=geometry_source_label,
+            contour_status_label=contour_status_label,
+            profile_station_count=None if analysis_bundle is None else max(len(analysis_bundle.thermochemistry_profile) - 1, 0),
+        )
         self._thermal_analysis_page.update_design_context(
             current_inputs=current_inputs,
             current_bundle=analysis_bundle,
@@ -1989,6 +2192,31 @@ class MainWindow(tk.Tk):
             geometry_source_label=geometry_source_label,
             contour_status_label=contour_status_label,
             profile_station_count=None if analysis_bundle is None else max(len(analysis_bundle.thermochemistry_profile) - 1, 0),
+        )
+        draft_network = self._current_r_network_draft
+        if analysis_bundle is not None and draft_network is not None:
+            stale_network, stale_notes = thermal_network_build_is_stale(
+                analysis_bundle,
+                self._thermal_analysis_inputs,
+                draft_network,
+            )
+            if stale_network:
+                self._r_network_builder_page.mark_draft_network_stale(stale_notes)
+        committed_stale_notes: tuple[str, ...] = ()
+        if analysis_bundle is not None and self._committed_r_network is not None:
+            committed_stale, committed_stale_notes = committed_thermal_network_is_stale(
+                analysis_bundle,
+                self._thermal_analysis_inputs,
+                self._committed_r_network,
+            )
+            self._committed_r_network.status = "stale" if committed_stale else "committed"
+        self._r_network_builder_page.set_committed_network(
+            self._committed_r_network,
+            stale_notes=committed_stale_notes,
+        )
+        self._thermal_analysis_page.set_committed_network(
+            self._committed_r_network,
+            stale_notes=committed_stale_notes,
         )
         if hasattr(self, "_property_tables_report_panel"):
             self._property_tables_report_panel.update_context(

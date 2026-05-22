@@ -16,7 +16,14 @@ from engine.flow import FlowCase, adapt_inputs_for_flow_case, classify_input_flo
 from engine.geometry import build_thermochemistry_profile, generate_nozzle_contour, size_engine_geometry
 from engine.io import export_bundle, export_geometry_to_csv, export_geometry_to_json
 from engine.models import BellContourVariant, ChemistryMode, ExportBundle, InputParameters, OFSweepResult
-from engine.thermal_analysis import ThermalAnalysisInputs, ThermalAnalysisResult, run_thermal_analysis
+from engine.thermal_analysis import (
+    ThermalAnalysisInputs,
+    ThermalAnalysisResult,
+    ThermalNetworkBuildResult,
+    build_thermal_network,
+    run_thermal_analysis,
+    run_thermal_analysis_from_network,
+)
 from engine.unit_system import UnitPreset
 from engine.utils.validation import InputValidationError, ensure_valid_input
 
@@ -88,6 +95,25 @@ class EngineDesignApplication:
         """Run the annulus-cooling reference model on the committed Current Design bundle."""
 
         return run_thermal_analysis(bundle, thermal_inputs)
+
+    def build_thermal_network(
+        self,
+        bundle: ExportBundle,
+        thermal_inputs: ThermalAnalysisInputs,
+    ) -> ThermalNetworkBuildResult:
+        """Build the station-wise thermal R-network from the active annulus setup."""
+
+        return build_thermal_network(bundle, thermal_inputs)
+
+    def run_thermal_analysis_from_network(
+        self,
+        bundle: ExportBundle,
+        thermal_inputs: ThermalAnalysisInputs,
+        network_build: ThermalNetworkBuildResult,
+    ) -> ThermalAnalysisResult:
+        """Run Thermal Analysis from a previously built thermal network."""
+
+        return run_thermal_analysis_from_network(bundle, thermal_inputs, network_build)
 
     def export_case(
         self,

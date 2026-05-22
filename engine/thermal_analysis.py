@@ -14,9 +14,11 @@ coolant-side heat-transfer coefficients than the fully developed baseline.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
+import hashlib
+import json
 import math
 import re
 
@@ -67,6 +69,12 @@ class ThermalModelType(str, Enum):
     ANNULUS_WITH_FILM_FUTURE = "annulus-with-film-future"
     CHANNELS_FUTURE = "channels-future"
     CHANNELS_WITH_FILM_FUTURE = "channels-with-film-future"
+
+
+class CoolingSegmentModelType(str, Enum):
+    """Segment model label kept for the thermal network preview and future builders."""
+
+    ANNULUS = "annulus"
 
 
 class ThermalSolverType(str, Enum):
@@ -564,6 +572,109 @@ class ThermalAnalysisResult:
 
 
 @dataclass(slots=True)
+class CoolingSegmentAssignment:
+    """Structured solver-facing view of one active cooling segment."""
+
+    segment_node_id: str
+    segment_label: str
+    segment_model_type: CoolingSegmentModelType
+    range_label: str
+    flow_direction: CoolingFlowDirection
+    mass_flow_fraction: float
+    parameters: dict[str, object]
+    active_mechanisms: tuple[ThermalMechanismType, ...]
+
+
+@dataclass(slots=True)
+class ThermalNetworkNode:
+    """One node in the previewable station thermal network."""
+
+    id: str
+    label: str
+    node_type: str
+    temperature_role: str | None = None
+
+
+@dataclass(slots=True)
+class ThermalNetworkElement:
+    """One resistive or source element in the previewable station network."""
+
+    id: str
+    label: str
+    element_type: str
+    from_node_id: str
+    to_node_id: str
+    value: float | None
+    unit: str
+    source: str
+    active: bool = True
+    note: str = ""
+
+
+@dataclass(slots=True)
+class StationThermalNetwork:
+    """Preview object representing one station-wise thermal network."""
+
+    station_id: int
+    engine_station_index: int | None
+    coolant_path_index: int | None
+    coolant_pass_id: str | None
+    region_label: str
+    segment_node_id: str
+    segment_label: str
+    segment_model_type: CoolingSegmentModelType
+    active_mechanisms: tuple[ThermalMechanismType, ...]
+    nodes: tuple[ThermalNetworkNode, ...]
+    elements: tuple[ThermalNetworkElement, ...]
+    warnings: tuple[str, ...]
+    notes: tuple[str, ...]
+    integration_rule_label: str
+    network_sketch: str
+    flow_direction: CoolingFlowDirection
+    hot_wall_area_m2: float | None = None
+    coolant_wall_area_m2: float | None = None
+    flow_area_m2: float | None = None
+    hydraulic_diameter_m: float | None = None
+
+
+@dataclass(slots=True)
+class ThermalNetworkBuildResult:
+    """Pre-solve network build artifact used by the GUI and the solver."""
+
+    status: str
+    build_id: str
+    station_networks: tuple[StationThermalNetwork, ...]
+    segment_assignments: tuple[CoolingSegmentAssignment, ...]
+    warnings: tuple[str, ...]
+    errors: tuple[str, ...]
+    summary: str
+    setup_summary: str
+    active_station_network_builder: str
+    design_fingerprint: str
+    solver_settings_fingerprint: str
+    mechanism_settings_fingerprint: str
+    effective_inputs: ThermalAnalysisInputs
+    station_samples: tuple[_SamplePoint, ...]
+
+
+@dataclass(slots=True)
+class CommittedThermalNetwork:
+    """Committed thermal-network artifact that downstream solver pages consume."""
+
+    build_id: str
+    created_at: str
+    design_fingerprint: str
+    geometry_fingerprint: str
+    material_fingerprint: str
+    manufacturing_fingerprint: str
+    cooling_layout_fingerprint: str
+    solver_mechanism_fingerprint: str
+    network_build_result: ThermalNetworkBuildResult
+    status: str
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True)
 class _CoolantNusseltCorrelationResult:
     """Selected plus comparison Nu_c values for one iteration-local coolant state."""
 
@@ -1034,6 +1145,404 @@ def thermal_scenario_from_inputs(
     )
 
 
+def _default_active_mechanisms(
+    thermal_inputs: ThermalAnalysisInputs,
+) -> tuple[ThermalMechanismType, ...]:
+    mechanisms = [
+        ThermalMechanismType.HOT_GAS_CONVECTION,
+        ThermalMechanismType.COOLANT_CONVECTION,
+        ThermalMechanismType.WALL_CONDUCTION,
+    ]
+    if thermal_inputs.radiation_settings.enabled:
+        mechanisms.append(ThermalMechanismType.RADIATION)
+    return tuple(mechanisms)
+
+
+def _build_default_segment_assignment(
+    thermal_inputs: ThermalAnalysisInputs,
+) -> CoolingSegmentAssignment:
+    """Build the current MVP annulus segment assignment without graph objects."""
+
+    return CoolingSegmentAssignment(
+        segment_node_id="annulus-baseline",
+        segment_label="Annulus Baseline",
+        segment_model_type=CoolingSegmentModelType.ANNULUS,
+        range_label="full contour",
+        flow_direction=thermal_inputs.flow_direction,
+        mass_flow_fraction=1.0,
+        parameters={
+            "annulus_gap_m": thermal_inputs.annulus_gap_m,
+            "roughness_m": thermal_inputs.coolant_roughness_m,
+            "model_type": thermal_inputs.model_type.value,
+        },
+        active_mechanisms=_default_active_mechanisms(thermal_inputs),
+    )
+
+
+def _build_network_setup_summary(thermal_inputs: ThermalAnalysisInputs) -> str:
+    return (
+        "Cooling path: single annulus baseline over full contour\n"
+        f"Flow direction: {thermal_inputs.flow_direction.value}\n"
+        f"Annulus gap: {thermal_inputs.annulus_gap_m:.6g} m | "
+        f"Roughness: {thermal_inputs.coolant_roughness_m:.6g} m"
+    )
+
+
+def _build_station_thermal_network(
+    station_id: int,
+    sample: _SamplePoint,
+    segment: CoolingSegmentAssignment,
+    effective_inputs: ThermalAnalysisInputs,
+) -> StationThermalNetwork:
+    geometry = _build_annulus_geometry(sample, effective_inputs.annulus_gap_m)
+    nodes = (
+        ThermalNetworkNode(id="hot_gas", label="T_aw", node_type="hot_gas", temperature_role="recovery"),
+        ThermalNetworkNode(id="hot_wall", label="T_wg", node_type="hot_wall", temperature_role="wall_hot"),
+        ThermalNetworkNode(id="coolant_wall", label="T_wc", node_type="coolant_wall", temperature_role="wall_coolant"),
+        ThermalNetworkNode(id="coolant_bulk", label="T_b,c", node_type="coolant_bulk", temperature_role="bulk"),
+    )
+    elements = [
+        ThermalNetworkElement(
+            id="R_g",
+            label="R_g",
+            element_type="gas_convection_resistance",
+            from_node_id="hot_gas",
+            to_node_id="hot_wall",
+            value=None,
+            unit="K/W",
+            source="requires solve / initial estimate",
+            note="Gas-side conductance is built from h_g * A_hot during the station solve.",
+        ),
+        ThermalNetworkElement(
+            id="R_wall",
+            label="R_wall",
+            element_type="wall_conduction_resistance",
+            from_node_id="hot_wall",
+            to_node_id="coolant_wall",
+            value=None,
+            unit="K/W",
+            source="requires solve / initial estimate",
+            note="Wall conduction uses temperature-dependent material properties during the solve.",
+        ),
+        ThermalNetworkElement(
+            id="R_c",
+            label="R_c",
+            element_type="coolant_convection_resistance",
+            from_node_id="coolant_wall",
+            to_node_id="coolant_bulk",
+            value=None,
+            unit="K/W",
+            source="requires solve / initial estimate",
+            note="Coolant-side conductance is built from h_c * A_cool during the station solve.",
+        ),
+    ]
+    if ThermalMechanismType.RADIATION in segment.active_mechanisms:
+        elements.append(
+            ThermalNetworkElement(
+                id="Q_rad",
+                label="Q_rad",
+                element_type="radiation_heat_source",
+                from_node_id="hot_gas",
+                to_node_id="hot_wall",
+                value=None,
+                unit="W",
+                source="requires solve / initial estimate",
+                note="Radiation is kept separate from Bartz convection and integrated as additive station heat.",
+            )
+        )
+    return StationThermalNetwork(
+        station_id=station_id,
+        engine_station_index=sample.engine_station_index,
+        coolant_path_index=sample.coolant_path_index,
+        coolant_pass_id=sample.coolant_pass_id,
+        region_label=sample.region_label,
+        segment_node_id=segment.segment_node_id,
+        segment_label=segment.segment_label,
+        segment_model_type=segment.segment_model_type,
+        active_mechanisms=segment.active_mechanisms,
+        nodes=nodes,
+        elements=tuple(elements),
+        warnings=(),
+        notes=(
+            f"Range: {segment.range_label}",
+            f"Integration rule: {_solver_scheme_label(effective_inputs.solver_settings.solver_type)}",
+            "A_flow is used for Re and pressure drop; A_hot/A_cool are used for station conductance.",
+        ),
+        integration_rule_label=_solver_scheme_label(effective_inputs.solver_settings.solver_type),
+        network_sketch="T_aw -- R_g -- T_wg -- R_wall -- T_wc -- R_c -- T_b,c",
+        flow_direction=segment.flow_direction,
+        hot_wall_area_m2=geometry.hot_wall_area_m2,
+        coolant_wall_area_m2=geometry.coolant_wall_area_m2,
+        flow_area_m2=geometry.area_annulus_m2,
+        hydraulic_diameter_m=geometry.hydraulic_diameter_m,
+    )
+
+
+def _fingerprint_payload(payload: dict[str, object]) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _design_fingerprint(bundle: ExportBundle) -> str:
+    contour_payload = [
+        {
+            "x_m": point.x_m,
+            "radius_m": point.radius_m,
+            "area_m2": point.area_m2,
+        }
+        for point in bundle.contour
+    ]
+    profile_payload = [
+        {
+            "x_m": point.x_m,
+            "radius_m": point.radius_m,
+            "area_m2": point.area_m2,
+            "region": point.region,
+        }
+        for point in bundle.thermochemistry_profile
+    ]
+    return _fingerprint_payload(
+        {
+            "geometry": {
+                "throat_area_m2": bundle.geometry.throat_area_m2,
+                "throat_radius_m": bundle.geometry.throat_radius_m,
+                "exit_area_m2": bundle.geometry.exit_area_m2,
+                "exit_radius_m": bundle.geometry.exit_radius_m,
+            },
+            "contour": contour_payload,
+            "thermochemistry_profile": profile_payload,
+        }
+    )
+
+
+def _geometry_fingerprint(bundle: ExportBundle) -> str:
+    return _fingerprint_payload(
+        {
+            "throat_area_m2": bundle.geometry.throat_area_m2,
+            "throat_radius_m": bundle.geometry.throat_radius_m,
+            "exit_area_m2": bundle.geometry.exit_area_m2,
+            "exit_radius_m": bundle.geometry.exit_radius_m,
+            "contour": [
+                {
+                    "x_m": point.x_m,
+                    "radius_m": point.radius_m,
+                    "area_m2": point.area_m2,
+                }
+                for point in bundle.contour
+            ],
+        }
+    )
+
+
+def _material_fingerprint(bundle: ExportBundle) -> str:
+    inputs = bundle.inputs
+    return _fingerprint_payload(
+        {
+            "liner_material": inputs.liner_material,
+            "wall_thickness_m": inputs.wall_thickness_m,
+            "wall_thickness_mode": getattr(inputs.wall_thickness_mode, "value", inputs.wall_thickness_mode),
+            "closeout_enabled": getattr(inputs, "closeout_enabled", None),
+            "closeout_thickness_m": getattr(inputs, "closeout_thickness_m", None),
+            "closeout_material": getattr(inputs, "closeout_material", None),
+        }
+    )
+
+
+def _manufacturing_fingerprint(bundle: ExportBundle) -> str:
+    inputs = bundle.inputs
+    return _fingerprint_payload(
+        {
+            "manufacturing_route": getattr(inputs.manufacturing_route, "value", inputs.manufacturing_route),
+            "coolant_roughness_m": getattr(inputs, "coolant_roughness_m", None),
+            "liner_material": inputs.liner_material,
+            "closeout_material": getattr(inputs, "closeout_material", None),
+        }
+    )
+
+
+def _cooling_layout_fingerprint(thermal_inputs: ThermalAnalysisInputs) -> str:
+    return _fingerprint_payload(
+        {
+            "model_type": thermal_inputs.model_type.value,
+            "flow_direction": thermal_inputs.flow_direction.value,
+            "annulus_gap_m": thermal_inputs.annulus_gap_m,
+            "coolant_roughness_m": thermal_inputs.coolant_roughness_m,
+        }
+    )
+
+
+def _solver_settings_fingerprint(thermal_inputs: ThermalAnalysisInputs) -> str:
+    solver_settings = thermal_inputs.solver_settings
+    return _fingerprint_payload(
+        {
+            "solver_type": solver_settings.solver_type.value,
+            "station_distribution_mode": solver_settings.station_distribution_mode.value,
+            "pressure_mode": solver_settings.pressure_mode.value,
+            "station_count": solver_settings.station_count,
+            "station_tolerance": solver_settings.station_tolerance,
+            "max_iterations_per_station": solver_settings.max_iterations_per_station,
+            "relaxation_factor": solver_settings.relaxation_factor,
+            "bartz_curvature_mode": thermal_inputs.bartz_throat_curvature_mode.value,
+        }
+    )
+
+
+def _mechanism_settings_fingerprint(
+    thermal_inputs: ThermalAnalysisInputs,
+) -> str:
+    return _fingerprint_payload(
+        {
+            "model_type": thermal_inputs.model_type.value,
+            "flow_direction": thermal_inputs.flow_direction.value,
+            "annulus_gap_m": thermal_inputs.annulus_gap_m,
+            "coolant_roughness_m": thermal_inputs.coolant_roughness_m,
+            "primary_nusselt_method": thermal_inputs.primary_coolant_nusselt_method.value,
+            "coolant_type": thermal_inputs.coolant_type,
+            "coolant_mass_flow_kg_per_s": thermal_inputs.coolant_mass_flow_kg_per_s,
+            "coolant_inlet_temperature_k": thermal_inputs.coolant_inlet_temperature_k,
+            "radiation_settings": {
+                "enabled": thermal_inputs.radiation_settings.enabled,
+                "model": thermal_inputs.radiation_settings.model.value,
+                "wall_emissivity": thermal_inputs.radiation_settings.wall_emissivity,
+                "gas_effective_emissivity": thermal_inputs.radiation_settings.gas_effective_emissivity,
+                "participating_media_enabled": thermal_inputs.radiation_settings.participating_media_enabled,
+                "participating_species_mode": thermal_inputs.radiation_settings.participating_species_mode.value,
+                "optical_path_length_mode": thermal_inputs.radiation_settings.optical_path_length_mode.value,
+                "co2_mole_fraction": thermal_inputs.radiation_settings.co2_mole_fraction,
+                "h2o_mole_fraction": thermal_inputs.radiation_settings.h2o_mole_fraction,
+                "soot_factor": thermal_inputs.radiation_settings.soot_factor,
+            },
+        }
+    )
+
+
+def thermal_network_build_is_stale(
+    bundle: ExportBundle,
+    thermal_inputs: ThermalAnalysisInputs,
+    network_build: ThermalNetworkBuildResult | None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Compare stored and current fingerprints to detect stale network builds."""
+
+    if network_build is None:
+        return True, ("R-Network has not been built yet.",)
+    warnings: list[str] = []
+    current_design_fingerprint = _design_fingerprint(bundle)
+    current_solver_fingerprint = _solver_settings_fingerprint(thermal_inputs)
+    current_mechanism_fingerprint = _mechanism_settings_fingerprint(thermal_inputs)
+    if current_design_fingerprint != network_build.design_fingerprint:
+        warnings.append("Committed geometry / contour / profile changed after the last network build.")
+    if current_solver_fingerprint != network_build.solver_settings_fingerprint:
+        warnings.append("Solver settings changed after the last network build.")
+    if current_mechanism_fingerprint != network_build.mechanism_settings_fingerprint:
+        warnings.append("Thermal setup, coolant or radiation settings changed after the last network build.")
+    return bool(warnings), tuple(warnings)
+
+
+def create_committed_thermal_network(
+    bundle: ExportBundle,
+    thermal_inputs: ThermalAnalysisInputs,
+    network_build: ThermalNetworkBuildResult,
+    *,
+    notes: tuple[str, ...] = (),
+) -> CommittedThermalNetwork:
+    """Freeze one validated network build as the committed design-side artifact."""
+
+    return CommittedThermalNetwork(
+        build_id=network_build.build_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        design_fingerprint=_design_fingerprint(bundle),
+        geometry_fingerprint=_geometry_fingerprint(bundle),
+        material_fingerprint=_material_fingerprint(bundle),
+        manufacturing_fingerprint=_manufacturing_fingerprint(bundle),
+        cooling_layout_fingerprint=_cooling_layout_fingerprint(thermal_inputs),
+        solver_mechanism_fingerprint=_fingerprint_payload(
+            {
+                "solver": _solver_settings_fingerprint(thermal_inputs),
+                "mechanisms": _mechanism_settings_fingerprint(thermal_inputs),
+            }
+        ),
+        network_build_result=network_build,
+        status="committed",
+        notes=notes,
+    )
+
+
+def committed_thermal_network_is_stale(
+    bundle: ExportBundle,
+    thermal_inputs: ThermalAnalysisInputs,
+    committed_network: CommittedThermalNetwork | None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Check whether the committed R-network still matches the active design context."""
+
+    if committed_network is None:
+        return True, ("No committed R-Network available.",)
+    warnings: list[str] = []
+    if _geometry_fingerprint(bundle) != committed_network.geometry_fingerprint:
+        warnings.append("Committed contour or station grid changed after the R-Network was committed.")
+    if _material_fingerprint(bundle) != committed_network.material_fingerprint:
+        warnings.append("Material or wall-stack assumptions changed after the R-Network was committed.")
+    if _manufacturing_fingerprint(bundle) != committed_network.manufacturing_fingerprint:
+        warnings.append("Manufacturing assumptions changed after the R-Network was committed.")
+    if _cooling_layout_fingerprint(thermal_inputs) != committed_network.cooling_layout_fingerprint:
+        warnings.append("Cooling layout inputs changed after the R-Network was committed.")
+    current_solver_mechanism = _fingerprint_payload(
+        {
+            "solver": _solver_settings_fingerprint(thermal_inputs),
+            "mechanisms": _mechanism_settings_fingerprint(thermal_inputs),
+        }
+    )
+    if current_solver_mechanism != committed_network.solver_mechanism_fingerprint:
+        warnings.append("Solver or active thermal-mechanism settings changed after the R-Network was committed.")
+    return bool(warnings), tuple(warnings)
+
+
+def build_thermal_network(
+    bundle: ExportBundle,
+    thermal_inputs: ThermalAnalysisInputs,
+) -> ThermalNetworkBuildResult:
+    """Build the station-wise thermal network from the active annulus setup."""
+
+    effective_inputs = replace(thermal_inputs)
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        _ensure_valid_thermal_inputs(bundle, effective_inputs)
+    except InputValidationError as exc:
+        errors.extend(line for line in str(exc).splitlines() if line.strip())
+    scenario = thermal_scenario_from_inputs(effective_inputs)
+    precalculation = _precalculate_thermal_model(bundle, scenario)
+    assignment = _build_default_segment_assignment(effective_inputs)
+    station_networks: list[StationThermalNetwork] = []
+    for station_id, sample in enumerate(precalculation.station_samples):
+        station_networks.append(
+            _build_station_thermal_network(station_id, sample, assignment, effective_inputs)
+        )
+    status = "ok"
+    if errors:
+        status = "error"
+    elif warnings:
+        status = "warning"
+    summary = (
+        f"Annulus baseline setup, 1 segment, "
+        f"{len(station_networks)} station network(s), builder AnnulusStationNetworkBuilder"
+    )
+    return ThermalNetworkBuildResult(
+        status=status,
+        build_id=f"network-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+        station_networks=tuple(station_networks),
+        segment_assignments=(assignment,),
+        warnings=tuple(dict.fromkeys(warnings)),
+        errors=tuple(dict.fromkeys(errors)),
+        summary=summary,
+        setup_summary=_build_network_setup_summary(effective_inputs),
+        active_station_network_builder="AnnulusStationNetworkBuilder",
+        design_fingerprint=_design_fingerprint(bundle),
+        solver_settings_fingerprint=_solver_settings_fingerprint(effective_inputs),
+        mechanism_settings_fingerprint=_mechanism_settings_fingerprint(effective_inputs),
+        effective_inputs=effective_inputs,
+        station_samples=tuple(precalculation.station_samples),
+    )
+
+
 def run_thermal_analysis(
     bundle: ExportBundle,
     thermal_inputs: ThermalAnalysisInputs,
@@ -1046,7 +1555,37 @@ def run_thermal_analysis(
     can later serve as a baseline comparison for detailed regenerative cooling.
     """
 
-    return run_thermal_scenario(bundle, thermal_scenario_from_inputs(thermal_inputs))
+    # The legacy one-call fallback intentionally remains annulus-only. Future
+    # segment models must enter through the explicit graph -> R-network build
+    # path so the GUI never hides a different solver interpretation than the
+    # one shown in the cooling circuit preview.
+    _ensure_valid_thermal_inputs(bundle, thermal_inputs)
+    network_build = build_thermal_network(bundle, thermal_inputs)
+    return run_thermal_analysis_from_network(bundle, thermal_inputs, network_build)
+
+
+def run_thermal_analysis_from_network(
+    bundle: ExportBundle,
+    thermal_inputs: ThermalAnalysisInputs,
+    network_build: ThermalNetworkBuildResult,
+) -> ThermalAnalysisResult:
+    """Run Thermal Analysis only from an already built network preview/result."""
+
+    stale, stale_notes = thermal_network_build_is_stale(
+        bundle,
+        thermal_inputs,
+        network_build,
+    )
+    if network_build.errors:
+        raise InputValidationError(list(network_build.errors))
+    if stale:
+        raise InputValidationError(
+            ["R-Network is stale. Rebuild before solving.", *stale_notes]
+        )
+    if network_build.status == "error":
+        raise InputValidationError(["R-Network is not valid. Rebuild and inspect the reported errors."])
+    scenario = thermal_scenario_from_inputs(network_build.effective_inputs)
+    return _run_annulus_baseline(bundle, scenario, prebuilt_network=network_build)
 
 
 def run_thermal_scenario(
@@ -1062,11 +1601,24 @@ def run_thermal_scenario(
 def _run_annulus_baseline(
     bundle: ExportBundle,
     scenario: ThermalScenario,
+    *,
+    prebuilt_network: ThermalNetworkBuildResult | None = None,
 ) -> ThermalAnalysisResult:
     """Execute the current annulus baseline using the modular scenario shell."""
 
-    thermal_inputs = scenario.global_conditions
-    precalculation = _precalculate_thermal_model(bundle, scenario)
+    thermal_inputs = prebuilt_network.effective_inputs if prebuilt_network is not None else scenario.global_conditions
+    precalculation = _precalculate_thermal_model(bundle, thermal_scenario_from_inputs(thermal_inputs))
+    if prebuilt_network is not None:
+        precalculation.station_samples = list(prebuilt_network.station_samples)
+        extra_notes = [
+            f"R-network build id: {prebuilt_network.build_id}",
+            f"R-network status: {prebuilt_network.status}",
+            f"R-network builder: {prebuilt_network.active_station_network_builder}",
+        ]
+        extra_notes.extend(prebuilt_network.warnings)
+        precalculation.bundle_status_notes = tuple(
+            dict.fromkeys((*extra_notes, *precalculation.bundle_status_notes))
+        )
     station_samples = precalculation.station_samples
     bundle_status_notes = precalculation.bundle_status_notes
     wall_temperature_limit_k = precalculation.wall_temperature_limit_k

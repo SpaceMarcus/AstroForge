@@ -1,7 +1,6 @@
 """Tests for the annulus-cooling thermal-analysis reference model."""
 
 import pytest
-
 from engine.gui.thermal_analysis_page import (
     _THERMAL_PLOT_FIELDS,
     _build_plot_export_rows,
@@ -19,6 +18,9 @@ from engine.models import (
 )
 from engine.thermal_analysis import (
     _build_station_samples_for_flow_direction,
+    build_thermal_network,
+    committed_thermal_network_is_stale,
+    create_committed_thermal_network,
     _compute_station_mechanical_screening,
     _coolant_nusselt_correlations,
     _resolve_coolant_bulk_temperature_reference,
@@ -26,6 +28,7 @@ from engine.thermal_analysis import (
     BartzThroatCurvatureMode,
     CoolantBulkTemperatureReference,
     CoolantNusseltMethod,
+    CoolingSegmentModelType,
     CoolingFlowDirection,
     ParticipatingSpeciesMode,
     PressureCalculationMode,
@@ -39,7 +42,9 @@ from engine.thermal_analysis import (
     ThermalSolverType,
     default_thermal_analysis_inputs,
     thermal_scenario_from_inputs,
+    thermal_network_build_is_stale,
     run_thermal_analysis,
+    run_thermal_analysis_from_network,
 )
 from engine.unit_system import UnitPreset
 from engine.utils.validation import InputValidationError
@@ -285,6 +290,58 @@ def test_run_thermal_analysis_returns_station_results_and_summary() -> None:
     assert result.summary.material_property_source == "screening-table"
     assert result.summary.max_von_mises_stress_pa is not None
     assert result.summary.max_total_screening_strain is not None
+
+
+def test_build_thermal_network_maps_annulus_segment_to_all_station_samples() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(coolant_mass_flow_kg_per_s=9.5, coolant_type="RP-1")
+
+    network_build = build_thermal_network(bundle, thermal_inputs)
+
+    assert network_build.status in {"ok", "warning"}
+    assert network_build.active_station_network_builder == "AnnulusStationNetworkBuilder"
+    assert len(network_build.segment_assignments) == 1
+    assert network_build.segment_assignments[0].segment_model_type is CoolingSegmentModelType.ANNULUS
+    assert len(network_build.station_networks) == len(network_build.station_samples)
+    assert all(network.network_sketch.startswith("T_aw -- R_g -- T_wg") for network in network_build.station_networks[:2])
+
+
+def test_run_thermal_analysis_from_network_uses_explicit_build_result() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(coolant_mass_flow_kg_per_s=9.5, coolant_type="RP-1")
+    network_build = build_thermal_network(bundle, thermal_inputs)
+
+    result = run_thermal_analysis_from_network(bundle, thermal_inputs, network_build)
+
+    assert len(result.stations) == len(network_build.station_samples)
+    assert result.stations[0].solver_scheme_label is not None
+    assert "R-network build id:" in result.stations[0].status
+
+
+def test_network_build_becomes_stale_after_graph_change() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(coolant_mass_flow_kg_per_s=9.5, coolant_type="RP-1")
+    network_build = build_thermal_network(bundle, thermal_inputs)
+    thermal_inputs.annulus_gap_m = 0.0022
+
+    stale, stale_notes = thermal_network_build_is_stale(bundle, thermal_inputs, network_build)
+
+    assert stale is True
+    assert any("Thermal setup" in note for note in stale_notes)
+
+
+def test_committed_r_network_becomes_stale_after_geometry_change() -> None:
+    bundle = _make_bundle()
+    thermal_inputs = ThermalAnalysisInputs(coolant_mass_flow_kg_per_s=9.5, coolant_type="RP-1")
+    network_build = build_thermal_network(bundle, thermal_inputs)
+    committed = create_committed_thermal_network(bundle, thermal_inputs, network_build)
+
+    bundle.geometry.exit_radius_m = 0.195
+
+    stale, stale_notes = committed_thermal_network_is_stale(bundle, thermal_inputs, committed)
+
+    assert stale is True
+    assert any("contour or station grid changed" in note for note in stale_notes)
 
 
 def test_forward_euler_uses_coolant_inlet_as_tb_reference() -> None:
