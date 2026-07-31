@@ -1,0 +1,123 @@
+{
+  "cases": [
+    {
+      "case_name": "SSME",
+      "delivered": {
+        "cf_optimum": 1.8443,
+        "cf_sea_level": 1.5572,
+        "cf_vacuum": 1.9117,
+        "characteristic_velocity_m_per_s": 2316.2853,
+        "isp_optimum_s": 435.6146,
+        "isp_sea_level_s": 367.796,
+        "isp_vacuum_s": 451.5357
+      },
+      "ideal": {
+        "cf_optimum": 1.8883,
+        "cf_sea_level": 1.6021,
+        "cf_vacuum": 1.9555,
+        "characteristic_velocity_m_per_s": 2323.8666,
+        "isp_optimum_s": 447.4664,
+        "isp_sea_level_s": 379.6478,
+        "isp_vacuum_s": 463.3876
+      },
+      "input_file": "examples/SSME.cfg",
+      "warnings": [
+        "WARNING: Could not find species CCLF3 defined in properties file",
+        "WARNING: Could not find species CCL2F2 defined in properties file",
+        "WARNING: Could not find species CCL3F defined in properties file",
+        "WARNING: Could not find species CHCLF2 defined in properties file",
+        "WARNING: Could not find species CHCL2F defined in properties file"
+      ]
+    },
+    {
+      "case_name": "Aestus",
+      "delivered": {
+        "cf_optimum": 1.8646,
+        "cf_sea_level": -6.3652,
+        "cf_vacuum": 1.9346,
+        "characteristic_velocity_m_per_s": 1664.4254,
+        "isp_optimum_s": 316.4717,
+        "isp_sea_level_s": -1080.3287,
+        "isp_vacuum_s": 328.3536
+      },
+      "ideal": {
+        "cf_optimum": 1.9113,
+        "cf_sea_level": -6.0319,
+        "cf_vacuum": 1.9789,
+        "characteristic_velocity_m_per_s": 1724.4734,
+        "isp_optimum_s": 336.0987,
+        "isp_sea_level_s": -1060.7017,
+        "isp_vacuum_s": 347.9806
+      },
+      "input_file": "examples/Aestus.cfg",
+      "warnings": [
+        "WARNING: Could not find species CCLF3 defined in properties file",
+        "WARNING: Could not find species CCL2F2 defined in properties file",
+        "WARNING: Could not find species CCL3F defined in properties file",
+        "WARNING: Could not find species CHCLF2 defined in properties file",
+        "WARNING: Could not find species CHCL2F defined in properties file"
+      ]
+    },
+    {
+      "case_name": "RD-170",
+      "delivered": {
+        "cf_optimum": 1.7565,
+        "cf_sea_level": 1.681,
+        "cf_vacuum": 1.8392,
+        "characteristic_velocity_m_per_s": 1801.1402,
+        "isp_optimum_s": 322.601,
+        "isp_sea_level_s": 308.7405,
+        "isp_vacuum_s": 337.7997
+      },
+      "ideal": {
+        "cf_optimum": 1.7992,
+        "cf_sea_level": 1.7243,
+        "cf_vacuum": 1.8814,
+        "characteristic_velocity_m_per_s": 1814.1066,
+        "isp_optimum_s": 332.8385,
+        "isp_sea_level_s": 318.978,
+        "isp_vacuum_s": 348.0372
+      },
+      "input_file": "examples/RD-170.cfg",
+      "warnings": [
+        "WARNING: Could not find species CCLF3 defined in properties file",
+        "WARNING: Could not find species CCL2F2 defined in properties file",
+        "WARNING: Could not find species CCL3F defined in properties file",
+        "WARNING: Could not find species CHCLF2 defined in properties file",
+        "WARNING: Could not find species CHCL2F defined in properties file"
+      ]
+    },
+    {
+      "case_name": "Vulcain-2",
+      "delivered": {
+        "cf_optimum": 1.8083,
+        "cf_sea_level": 1.3554,
+        "cf_vacuum": 1.8811,
+        "characteristic_velocity_m_per_s": 2239.1361,
+        "isp_optimum_s": 412.8808,
+        "isp_sea_level_s": 309.4753,
+        "isp_vacuum_s": 429.5149
+      },
+      "ideal": {
+        "cf_optimum": 1.8522,
+        "cf_sea_level": 1.4036,
+        "cf_vacuum": 1.9244,
+        "characteristic_velocity_m_per_s": 2260.6224,
+        "isp_optimum_s": 426.9691,
+        "isp_sea_level_s": 323.5636,
+        "isp_vacuum_s": 443.6032
+      },
+      "input_file": "examples/Vulcain-2.cfg",
+      "warnings": [
+        "WARNING: Could not find species CCLF3 defined in properties file",
+        "WARNING: Could not find species CCL2F2 defined in properties file",
+        "WARNING: Could not find species CCL3F defined in properties file",
+        "WARNING: Could not find species CHCLF2 defined in properties file",
+        "WARNING: Could not find species CHCL2F defined in properties file"
+      ]
+    }
+  ],
+  "format": "astraforge-rpa-benchmark",
+  "rpa_version": "2.3.2 Standard",
+  "version": 1
+}

@@ -8,7 +8,9 @@ regeneratively cooled LOX/RP-1 class engine with:
 - chamber / throat / nozzle geometry predesign
 - explicit Current Design workspace with draft / preview / committed separation
 - contour generation and export
-- annulus-cooling thermal-analysis MVP
+- annulus-cooling thermal-analysis reference model
+- variable regenerative-channel hydraulic and coolant-heating design
+- gaseous and liquid film-cooling screening based on the RPA mixing model
 - table-based coolant and wall-material property lookup
 - preliminary thermal / mechanical screening tables
 
@@ -18,6 +20,7 @@ The codebase keeps the main concerns separated:
 - `engine/chemistry/` hides RocketCEA behind a dedicated backend interface.
 - `engine/geometry/` sizes the engine and generates/exportable contours.
 - `engine/thermal_analysis.py` contains the station-wise cooling MVP solver.
+- `engine/cooling/` contains canonical channel geometry, hydraulics and film models.
 - `engine/properties/` loads editable coolant and solid-material property tables.
 - `engine/io/` handles JSON and CSV exports.
 - `engine/gui/` provides the Tkinter desktop interface and matplotlib plots.
@@ -46,6 +49,8 @@ It then computes:
 - clickable O/F sweeps
 - preliminary chamber / throat / TOP nozzle design helpers
 - station-wise annulus-cooling thermal-analysis reference results
+- stationwise variable-channel geometry, pressure loss, coolant heating and
+  film-cooling results
 
 ## Branding
 
@@ -150,7 +155,48 @@ The current GUI is organized into these tabs:
    - secondary committed-geometry detail view
    - geometry summary and export-oriented context
 
-6. `Thermal Analysis`
+6. `Delivered Performance`
+   - RPA-style combustion, friction, divergence and multi-phase loss structure
+   - corrected delivered `c*`, `Cf`, `Isp`, mass flow and thrust
+   - altitude envelope using a standard-atmosphere pressure model
+   - 40-100% preliminary throttle map
+   - Mach-dependent Schmucker separation screening
+   - dedicated CSV export
+
+7. `Injector Head Designer`
+   - injector-head workflow placeholder and early design context
+
+8. `R-Network Builder`
+   - explicit thermal-resistance-network build and commit workflow
+
+9. `Cooling Design`
+   - injector/throat/exit profiles for channel count, width, height, rib,
+     hot-wall thickness and helix angle
+   - rectangular, trapezoidal, rounded, semicircular, circular/tubular,
+     racetrack and custom-polygon sections
+   - temperature- and pressure-dependent coolant properties
+   - Darcy pressure loss, variable-area acceleration and local-loss interfaces
+   - Gnielinski heat transfer plus explicit RPA coolant-specific comparison
+     correlations
+- gaseous film mixing and liquid-film heating/vaporization
+- multiple independent, sequential or parallel circuit paths with validated
+  axial segment ranges and heat-load splits
+   - geometry/result plots, station table and CSV export
+   - STEP/STL assembly export for gas volume, cooled liner and channel fluids
+   - Gmsh/VTK gas and channel CFD meshes with named boundaries and JSON manifest
+
+10. `Engine Cycle`
+   - gas-generator, staged-combustion, full-flow staged-combustion and expander
+     topology selection
+   - oxidizer and fuel main-pump pressure work with fluid density and efficiency
+   - single combined shaft or two independent turbopump shafts
+   - ideal-gas turbine expansion with isentropic and mechanical efficiencies
+   - solved turbine working-fluid flow for closed shaft-power balance
+   - RPA 2.3 cycle-block import for pump, booster-pump, branch,
+     gas-generator/preburner and turbine design data
+   - component table, power/flow plots and CSV export
+
+11. `Thermal Analysis`
    - annulus-cooling MVP reference model
    - read-only committed design context
    - optional radiation screening controls
@@ -160,10 +206,10 @@ The current GUI is organized into these tabs:
    - station result table with thermal and preliminary mechanical screening values
    - separate plot window with export
 
-7. `Comparison`
+12. `Comparison`
    - reference / current comparison baseline
 
-8. `Report`
+13. `Report`
    - report placeholder plus property-table inspection views
 
 ## Current Design and Geometry Workflow
@@ -197,8 +243,82 @@ The geometry workflow currently supports:
 - conical and bell contour families
 - bell-length handling by manual length or `Lf [%]`
 - preliminary divergent-loss handling for nozzle decisions
+- conical divergence correction from RPA equation 16
+- bell-nozzle divergence correction from RPA equation 20
+- Mach-dependent Schmucker nozzle-separation screening
 
-## Thermal Analysis MVP
+## Delivered Performance and Operating Map
+
+The committed Current Design now feeds a dedicated delivered-performance
+dashboard. It preserves AstraForge's RocketCEA thermochemistry and applies the
+RPA correction-factor structure without replacing the existing ideal results.
+
+The model includes:
+
+- finite-rate chamber-loss estimation for the empirical RPA propellant families
+- user-controlled combustion and friction efficiencies
+- contour-family-specific divergence efficiency
+- optional multi-phase loss equations in the engineering core
+- explicit ambient pressure thrust
+- delivered vacuum and ambient `Isp`
+- delivered mass flow and thrust
+- altitude and throttle plots plus an operating-point table
+- CSV map export
+
+The implementation and remaining gaps are tracked in `RPA_PARITY.md`.
+
+## Cooling Design and Thermal Analysis
+
+The `Cooling Design` workspace uses a shared station and channel definition
+that is also intended for CAD and CFD export. Channel count, section
+dimensions, rib and wall thickness, roughness and helicity can vary along the
+hot-wall arc length. The hydraulic solver reports:
+
+- per-channel and total flow area
+- hydraulic diameter and full wetted perimeter
+- mass flux, velocity, Reynolds and Prandtl numbers
+- shape-aware laminar or Gnielinski heat transfer
+- Darcy friction, helical path length, variable-area acceleration and optional
+  minor-loss contributions
+- coolant temperature and pressure at every stable engine station
+- circumferential pitch/ligament feasibility and Dean-number diagnostics
+
+The same channel definition now drives an iterated thermal solution. It couples
+Bartz gas-side convection, optional hot-gas radiation, temperature-dependent
+liner conductivity, local wall thickness, RPA rib/fin surface enhancement and
+the marching coolant state. The workspace plots coolant, coolant-side wall and
+hot-gas-side wall temperatures and exports all heat-transfer coefficients and
+convective/radiative/total heat fluxes per station. The entered heat flux is an
+initial iteration guess, not a prescribed result.
+
+The RPA-specific kerosene, hydrogen, methane and generic coolant Nusselt
+relations remain available as transparent comparison functions. Rib/fin
+surface enhancement follows the channel-wall relation documented by RPA.
+
+Film cooling supports the documented RPA two-zone gaseous mixing law and the
+liquid-film heating/vaporization energy balance. Until stationwise
+surface-layer chemistry is coupled, the scalar wall-heat-flux effectiveness is
+explicitly reported as screening-level.
+
+The existing `Thermal Analysis` module remains the coupled annulus reference
+model.
+
+## Engine Cycle
+
+The `Engine Cycle` workspace uses the committed chamber mass flow and mixture
+ratio to size the oxidizer and fuel pump loads. Pump power follows
+incompressible volume-flow pressure work divided by pump efficiency. Turbine
+power uses an ideal-gas isentropic temperature drop with user-controlled
+isentropic and mechanical efficiencies. One unspecified turbine mass flow per
+shaft is solved so the shaft power closes exactly, including optional accessory
+load.
+
+The active component kernel supports a combined shaft or two independent
+shafts and labels gas-generator, staged-combustion, full-flow staged-combustion
+and expander topologies. RPA `turbopumpFeedSystem` blocks are mapped to SI and
+prepopulate directly compatible pump, preburner/gas-generator and turbine
+fields. Booster pumps and optional feed branches are preserved as reviewable
+import data but are not yet included in the active shaft calculation.
 
 The current thermal-analysis module is intentionally an MVP reference model.
 
@@ -232,8 +352,10 @@ What it currently shows:
 
 Important current assumptions:
 
-- only the annulus reference model is active
-- detailed channel cooling is planned for a later version
+- both the annulus reference path and the variable-channel workspace have
+  coupled hot-gas/wall/coolant solutions
+- the variable-channel path currently uses a single conductive liner layer;
+  multilayer coatings, closeout conduction and axial conduction remain open
 - spacer ribs are shown only as a mechanical assumption and are not included in
   the MVP calculation
 - `A_flow` is used for coolant velocity, `Re_c` and pressure drop
@@ -283,7 +405,43 @@ The thermal plot window also supports export of the currently shown plot as:
 - `PNG`
 - `SVG`
 
+Cooling Design additionally writes:
+
+- a named STEP AP214 assembly from the local FreeCAD B-Rep engine
+- separate STEP files for hot-gas volume, cooled liner and coolant-channel fluid
+- a secondary assembly STL
+- an axisymmetric gas-flowfield mesh in Gmsh MSH 4.1 and VTK
+- a representative 3-D helical channel-flowfield mesh in Gmsh MSH 4.1 and VTK
+- JSON manifests with coordinate/units metadata, physical boundary IDs,
+  consistency checks, cell counts, area/volume ranges, edge-aspect ratios and
+  watertightness
+
+The exporter requests and detects the actual STEP schema instead of merely
+renaming a file. The current local FreeCAD backend writes AP214; AP242 remains
+the target for a backend that supports it reliably.
+
 The GUI export dialogs use the `outputs/` directory by default.
+
+## RPA Configuration Interchange
+
+The File menu can import and export RPA `*.cfg` files. The importer uses a
+non-executing libconfig parser and currently maps the liquid-bipropellant
+performance and geometry subset:
+
+- chamber and ambient pressure
+- thrust or throat-diameter sizing input
+- O/F ratio and first oxidizer/fuel component
+- contraction and expansion ratios
+- equilibrium/frozen settings
+- characteristic length and basic contour settings
+- RPA/RocketCEA propellant aliases and engineering units
+
+Unsupported RPA-only fields remain visible as import warnings. Monopropellant
+and solid-mixture cases are rejected explicitly rather than converted to a
+misleading surrogate propellant.
+
+Structured RPA 2.3.2 reference results for SSME, Aestus, RD-170 and Vulcain-2
+are stored under `benchmarks/` for continuing numerical regression work.
 
 ## Important Simplifications
 
@@ -291,10 +449,17 @@ This version intentionally targets a robust predesign workflow, not a final
 engine design tool.
 
 - no custom chemical equilibrium solver
-- no full channel-by-channel regenerative cooling solver yet
-- no detailed rib/spacer thermal-hydraulic model yet
+- no full multi-component propellant editor or thermodynamic database editor
+- no fully coupled preburner chemistry, branch mass-flow, booster-pump or
+  chamber/turbine pressure iteration yet
+- engine dry-mass and turbomachinery geometry/speed sizing remain open
+- multiple channel circuits and segment hand-offs are not yet exposed in the GUI
+- channel rib/fin enhancement is available as an engineering correlation, but
+  full conjugate rib/liner/closeout conduction is not yet active
 - no full structural or liner stress model
 - no 2D/3D conjugate heat-conduction model
+- no full 3-D gas-sector/full-annulus CFD mesh yet; the active gas mesh is the
+  axisymmetric meridional domain
 - no complete injector-face thermal model yet
 - no aerospike implementation yet
 - first-order sizing remains central to the workflow
@@ -314,8 +479,8 @@ The current structure is set up so later additions can attach cleanly:
 
 - more detailed heat-transfer correlations can attach to the contour/profile
   layer
-- full regenerative channel cooling can build on the current thermal-analysis
-  interfaces
+- the canonical channel model drives coupled thermal, STEP and CFD-mesh
+  consumers without duplicating geometry
 - more detailed TOP / TIC / TOC nozzle construction can extend the dedicated
   nozzle-geometry helpers
 - aerospike support can be added later as another contour family without
@@ -340,6 +505,7 @@ project_root/
     models.py
     performance_preview.py
     project_state.py
+    station_mesh.py
     thermal_analysis.py
     geometry_preview.py
     nozzle_geometry.py
@@ -348,6 +514,16 @@ project_root/
     properties/
       __init__.py
       property_tables.py
+    cooling/
+      __init__.py
+      models.py
+      channel_flow.py
+      film_cooling.py
+    cycle/
+      __init__.py
+      models.py
+      solver.py
+      rpa_import.py
     chemistry/
       __init__.py
       base.py

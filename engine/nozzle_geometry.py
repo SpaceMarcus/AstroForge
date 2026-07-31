@@ -89,13 +89,68 @@ def get_top_nozzle_report_metadata() -> dict[str, str]:
 
 
 def compute_divergence_efficiency(exit_angle_deg: float | None) -> float | None:
-    """Return a preliminary divergence-efficiency factor from the exit wall angle.
+    """Return the conical cosine divergence factor from the exit half-angle.
 
-    The returned factor is a compact pre-design cosine-loss approximation that
-    can be used for preview-level thrust adjustments. It is not a replacement
-    for full nozzle-flow optimization.
+    This is RPA equation 16 and is exact only for the one-dimensional correction
+    of a conical nozzle.  Bell nozzles should use
+    :func:`compute_bell_divergence_efficiency`.
     """
 
     if exit_angle_deg is None or not math.isfinite(exit_angle_deg):
         return None
     return 0.5 * (1.0 + math.cos(math.radians(exit_angle_deg)))
+
+
+def compute_bell_divergence_efficiency(
+    *,
+    expansion_ratio: float,
+    length_fraction: float,
+    average_isentropic_exponent: float,
+) -> float:
+    """Return the empirical bell-nozzle divergence factor from RPA equation 20.
+
+    ``length_fraction`` accepts either the nondimensional range 0.4-1.0 or the
+    corresponding percentage range 40-100.  Values of the average isentropic
+    exponent outside the documented 1.1-1.25 range are conservatively clipped
+    to the nearest validity boundary.
+    """
+
+    if not math.isfinite(expansion_ratio) or expansion_ratio <= 1.0:
+        raise ValueError("Bell divergence efficiency requires Ae/At > 1.")
+    if not math.isfinite(length_fraction):
+        raise ValueError("Bell length fraction must be finite.")
+    if length_fraction > 1.0:
+        length_fraction /= 100.0
+    if not 0.4 <= length_fraction <= 1.0:
+        raise ValueError(
+            "RPA bell divergence equation 20 requires a length fraction from 0.4 to 1.0."
+        )
+    if (
+        not math.isfinite(average_isentropic_exponent)
+        or average_isentropic_exponent <= 1.0
+    ):
+        raise ValueError(
+            "Bell divergence efficiency requires an average isentropic exponent above 1."
+        )
+    average_isentropic_exponent = max(
+        1.1,
+        min(1.25, average_isentropic_exponent),
+    )
+
+    relative_exit_radius = math.sqrt(expansion_ratio)
+    relative_origin_radius = 1.0 + (
+        (relative_exit_radius - 1.0) / length_fraction
+    )
+    coefficient_b = 1.52 * (
+        math.exp(-30.0 * (average_isentropic_exponent - 1.0)) + 0.1
+    )
+    exponent_n = (
+        1.45 * relative_origin_radius**0.25
+        - 0.005 * relative_origin_radius
+    )
+    numerator = math.exp(
+        exponent_n * (1.0 - relative_exit_radius / relative_origin_radius)
+    ) - 1.0
+    denominator = math.exp(exponent_n) - 1.0
+    efficiency = 1.0 - coefficient_b * numerator / denominator
+    return max(0.0, min(1.0, efficiency))

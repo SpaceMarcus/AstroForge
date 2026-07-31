@@ -19,7 +19,10 @@ from engine.models import (
     ThermochemistryProfilePoint,
     WallThicknessMode,
 )
-from engine.nozzle_geometry import compute_divergence_efficiency
+from engine.nozzle_geometry import (
+    compute_bell_divergence_efficiency,
+    compute_divergence_efficiency,
+)
 from engine.nozzle_preview import build_nozzle_preview
 from engine.unit_system import (
     UnitPreset,
@@ -426,7 +429,7 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
             return {}
         # The preview already resolves the active exit angle and bell length, so we reuse
         # that nozzle-only snapshot when committing divergent-loss assumptions.
-        divergent_loss_factor = compute_divergence_efficiency(preview.outflow_angle_deg)
+        divergent_loss_factor = self._preview_divergence_efficiency(preview)
         return {
             "divergent_loss_factor": divergent_loss_factor,
             "divergent_loss_percent": None
@@ -627,7 +630,7 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
         )
         # Divergent loss is shown here because it depends only on the nozzle exit-angle draft
         # and can therefore be reviewed and committed independently from other geometry edits.
-        divergent_loss_factor = compute_divergence_efficiency(preview.outflow_angle_deg)
+        divergent_loss_factor = self._preview_divergence_efficiency(preview)
         if divergent_loss_factor is None:
             self._divergent_loss_var.set("Divergent loss: not available.")
             if self._apply_divergent_loss_button is not None:
@@ -642,6 +645,26 @@ class GeometryMaterialEditorPanel(ttk.LabelFrame):
 
     def _handle_preview_resize(self, _event: object) -> None:
         self._refresh_preview()
+
+    def _preview_divergence_efficiency(self, preview) -> float | None:
+        """Resolve the contour-family-specific RPA divergence correction."""
+
+        if not self._current_is_bell:
+            return compute_divergence_efficiency(preview.outflow_angle_deg)
+        gamma = 1.20
+        if (
+            self._runtime_bundle is not None
+            and self._runtime_bundle.thermochemistry.gamma is not None
+        ):
+            gamma = self._runtime_bundle.thermochemistry.gamma
+        try:
+            return compute_bell_divergence_efficiency(
+                expansion_ratio=preview.expansion_ratio,
+                length_fraction=preview.length_fraction_percent or 80.0,
+                average_isentropic_exponent=gamma,
+            )
+        except ValueError:
+            return None
 
     def _apply_divergent_loss(self) -> None:
         """Commit the current preview loss factor into Current Design."""
