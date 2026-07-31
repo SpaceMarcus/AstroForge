@@ -29,3 +29,30 @@ def test_backend_raises_friendly_error_when_rocketcea_is_unavailable() -> None:
         backend.calculate(make_valid_inputs())
 
     assert "RocketCEA is not installed" in str(exc_info.value)
+
+
+def test_exact_vacuum_ambient_uses_vacuum_performance_without_rocketcea_call() -> None:
+    class AmbientMethodsMustNotRun:
+        def estimate_Ambient_Isp(self, **_kwargs):
+            raise AssertionError("Ambient RocketCEA method must not run for Pa=0.")
+
+        def get_PambCf(self, **_kwargs):
+            raise AssertionError("Ambient RocketCEA method must not run for Pa=0.")
+
+    inputs = make_valid_inputs()
+    inputs.ambient_pressure_pa = 0.0
+    backend = RocketCEABackend()
+
+    isp_amb, cf_amb, mode = backend._ambient_performance(
+        cea=AmbientMethodsMustNotRun(),
+        pc_psia=1_000.0,
+        pa_psia=0.0,
+        c_star_m_s=1_800.0,
+        isp_vac_s=350.0,
+        inputs=inputs,
+        flags=backend._mode_flags(inputs.chemistry_mode),
+    )
+
+    assert isp_amb == 350.0
+    assert cf_amb == pytest.approx(350.0 * 9.80665 / 1_800.0)
+    assert mode == "vacuum"

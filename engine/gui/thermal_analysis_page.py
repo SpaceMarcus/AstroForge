@@ -13,7 +13,6 @@ from engine.models import ExportBundle, InputParameters
 from engine.thermal_analysis import (
     BartzThroatCurvatureMode,
     CommittedThermalNetwork,
-    CoolingSegmentAssignment,
     CoolantNusseltMethod,
     CoolingFlowDirection,
     OpticalPathLengthMode,
@@ -25,11 +24,9 @@ from engine.thermal_analysis import (
     RadiationTemperatureSource,
     SolverSettings,
     StationDistributionMode,
-    StationThermalNetwork,
     ThermalAnalysisInputs,
     ThermalModelType,
     ThermalAnalysisResult,
-    ThermalNetworkBuildResult,
     ThermalSolverType,
     ThermalStationResult,
 )
@@ -135,6 +132,13 @@ _OPTICAL_PATH_LENGTH_MODE_LABELS = {
 }
 _OPTICAL_PATH_LENGTH_MODE_VALUES = {
     label: value for value, label in _OPTICAL_PATH_LENGTH_MODE_LABELS.items()
+}
+
+_THERMAL_RUN_MODE_QUICK = "quick-annulus-reference"
+_THERMAL_RUN_MODE_COMMITTED = "committed-r-network"
+_THERMAL_RUN_MODE_LABELS = {
+    _THERMAL_RUN_MODE_QUICK: "Quick Annulus Reference",
+    _THERMAL_RUN_MODE_COMMITTED: "Use Committed R-Network",
 }
 
 
@@ -391,196 +395,6 @@ class ExistingDesignContextCard(ttk.LabelFrame):
         )
         self._value_vars["geometry_source"].set(geometry_source_label)
         self._value_vars["contour_status"].set(contour_status_label)
-
-
-class CoolingCircuitSetupCard(ttk.LabelFrame):
-    """Compact setup summary after removing the abandoned visual node-editor prototype."""
-
-    def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master, text="Cooling Circuit Setup", padding=12)
-        self.columnconfigure(1, weight=1)
-        self._validation_var = tk.StringVar(value="Setup not validated yet.")
-        self._summary_var = tk.StringVar(value="")
-        self._build_widgets()
-        self.set_inputs(None)
-
-    def _build_widgets(self) -> None:
-        ttk.Label(self, text="Active path").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Label(self, text="Single annulus baseline").grid(row=0, column=1, sticky="w", pady=4)
-        button_row = ttk.Frame(self)
-        button_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        self._build_button = ttk.Button(button_row, text="Build R-Network")
-        self._build_button.grid(row=0, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._validation_var, foreground="#244a6d", wraplength=980, justify="left").grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0)
-        )
-        ttk.Label(self, textvariable=self._summary_var, wraplength=980, justify="left").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0)
-        )
-
-    def bind_build_network(self, callback: Callable[[], None]) -> None:
-        self._build_button.configure(command=callback)
-
-    def set_validation_result(self, text: str) -> None:
-        self._validation_var.set(text)
-
-    def set_inputs(self, inputs: ThermalAnalysisInputs | None) -> None:
-        if inputs is None:
-            self._summary_var.set(
-                "The previous Simulink-style node editor was removed. "
-                "R-Network builds now use the active annulus setup below."
-            )
-            return
-        self._summary_var.set(
-            "Cooling path: single annulus baseline over full contour\n"
-            f"Flow direction: {inputs.flow_direction.value}\n"
-            f"Annulus gap: {format_quantity(inputs.annulus_gap_m, 'length', UnitPreset.SI, include_unit=True)} | "
-            f"Roughness: {format_quantity(inputs.coolant_roughness_m, 'length', UnitPreset.SI, include_unit=True)}"
-        )
-
-
-class NetworkPreviewPanel(ttk.LabelFrame):
-    """Preview of the built thermal R-network before solving."""
-
-    def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset) -> None:
-        super().__init__(master, text="R-Network Preview", padding=12)
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
-        self._unit_preset = unit_preset
-        self._result: ThermalNetworkBuildResult | None = None
-        self._status_var = tk.StringVar(value="Not built")
-        self._summary_var = tk.StringVar(value="Build the R-network to preview the segment-to-station mapping and station network sketch.")
-        self._warnings_var = tk.StringVar(value="--")
-        self._station_selector_var = tk.StringVar(value="")
-        self._station_sketch_var = tk.StringVar(value="No R-network selected yet.")
-        ttk.Label(self, textvariable=self._status_var, foreground="#244a6d").grid(row=0, column=0, sticky="w")
-        ttk.Label(self, textvariable=self._summary_var, wraplength=980, justify="left").grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        mapping_frame = ttk.Frame(self)
-        mapping_frame.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
-        mapping_frame.columnconfigure(0, weight=1)
-        mapping_frame.rowconfigure(1, weight=1)
-        ttk.Label(mapping_frame, text="Segment-to-station mapping").grid(row=0, column=0, sticky="w")
-        self._mapping_tree = ttk.Treeview(
-            mapping_frame,
-            columns=("segment", "model", "range", "station_count", "flow_direction", "mechanisms", "status"),
-            show="headings",
-            height=6,
-        )
-        self._mapping_tree.grid(row=1, column=0, sticky="nsew")
-        for key, label, width in (
-            ("segment", "Segment", 180),
-            ("model", "Model", 160),
-            ("range", "Range", 160),
-            ("station_count", "Station count", 100),
-            ("flow_direction", "Flow direction", 130),
-            ("mechanisms", "Mechanisms", 220),
-            ("status", "Status", 180),
-        ):
-            self._mapping_tree.heading(key, text=label)
-            self._mapping_tree.column(key, width=width, stretch=False, anchor="center")
-        station_frame = ttk.LabelFrame(self, text="Selected station R-network", padding=8)
-        station_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-        station_frame.columnconfigure(1, weight=1)
-        ttk.Label(station_frame, text="Station").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self._station_selector = ttk.Combobox(station_frame, state="readonly", textvariable=self._station_selector_var)
-        self._station_selector.grid(row=0, column=1, sticky="ew")
-        self._station_selector.bind("<<ComboboxSelected>>", self._handle_station_selected)
-        ttk.Label(station_frame, textvariable=self._station_sketch_var, wraplength=980, justify="left").grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0)
-        )
-        ttk.Label(self, textvariable=self._warnings_var, wraplength=980, justify="left", foreground="#7d4d1b").grid(
-            row=4, column=0, sticky="ew", pady=(12, 0)
-        )
-
-    def clear(self) -> None:
-        self._result = None
-        self._status_var.set("Not built")
-        self._summary_var.set("Build the R-network to preview the segment-to-station mapping and station network sketch.")
-        self._warnings_var.set("--")
-        self._station_selector.configure(values=())
-        self._station_selector_var.set("")
-        self._station_sketch_var.set("No R-network selected yet.")
-        for item in self._mapping_tree.get_children():
-            self._mapping_tree.delete(item)
-
-    def set_build_result(self, result: ThermalNetworkBuildResult) -> None:
-        self.clear()
-        self._result = result
-        self._status_var.set(
-            f"{result.status.upper()} | Builder: {result.active_station_network_builder} | Build ID: {result.build_id}"
-        )
-        self._summary_var.set(f"{result.summary}\n{result.setup_summary}")
-        warning_lines = list(result.warnings) + list(result.errors)
-        self._warnings_var.set("--" if not warning_lines else "\n".join(f"- {line}" for line in warning_lines))
-        mapping_counts: dict[str, int] = {}
-        for station_network in result.station_networks:
-            mapping_counts[station_network.segment_node_id] = mapping_counts.get(station_network.segment_node_id, 0) + 1
-        for assignment in result.segment_assignments:
-            mechanisms = ", ".join(mechanism.value for mechanism in assignment.active_mechanisms) or "--"
-            range_label = assignment.range_label
-            status = "mapped"
-            self._mapping_tree.insert(
-                "",
-                "end",
-                values=(
-                    assignment.segment_label,
-                    assignment.segment_model_type.value,
-                    range_label,
-                    mapping_counts.get(assignment.segment_node_id, 0),
-                    assignment.flow_direction.value,
-                    mechanisms,
-                    status,
-                ),
-            )
-        selector_values = [
-            f"{network.station_id}: {network.segment_label} @ {network.region_label}"
-            for network in result.station_networks
-        ]
-        self._station_selector.configure(values=selector_values)
-        if selector_values:
-            self._station_selector_var.set(selector_values[0])
-            self._update_station_preview(result.station_networks[0])
-
-    def mark_stale(self, messages: tuple[str, ...]) -> None:
-        if self._result is None:
-            self._status_var.set("STALE | R-Network changed before the first solve.")
-            self._warnings_var.set("\n".join(f"- {message}" for message in messages))
-            return
-        self._status_var.set(f"STALE | Last build {self._result.build_id}")
-        self._warnings_var.set("\n".join(f"- {message}" for message in messages))
-
-    def _handle_station_selected(self, _event: object) -> None:
-        if self._result is None:
-            return
-        selection = self._station_selector_var.get()
-        prefix = selection.split(":", 1)[0].strip()
-        try:
-            station_id = int(prefix)
-        except ValueError:
-            return
-        for network in self._result.station_networks:
-            if network.station_id == station_id:
-                self._update_station_preview(network)
-                break
-
-    def _update_station_preview(self, network: StationThermalNetwork) -> None:
-        lines = [
-            network.network_sketch + (" + Q_rad" if any(element.element_type == "radiation_heat_source" for element in network.elements) else ""),
-            f"Segment: {network.segment_label} ({network.segment_model_type.value})",
-            f"Flow direction: {network.flow_direction.value}",
-            f"Integration rule: {network.integration_rule_label}",
-            f"A_flow: {_fmt_quantity(network.flow_area_m2, 'area', self._unit_preset)}",
-            f"A_hot: {_fmt_quantity(network.hot_wall_area_m2, 'area', self._unit_preset)}",
-            f"A_cool: {_fmt_quantity(network.coolant_wall_area_m2, 'area', self._unit_preset)}",
-            f"D_h: {_fmt_quantity(network.hydraulic_diameter_m, 'length', self._unit_preset)}",
-        ]
-        if network.notes:
-            lines.append("Notes:")
-            lines.extend(f"- {note}" for note in network.notes)
-        if network.warnings:
-            lines.append("Warnings:")
-            lines.extend(f"- {warning}" for warning in network.warnings)
-        self._station_sketch_var.set("\n".join(lines))
 
 
 class AnnulusCoolingCard(ttk.LabelFrame):
@@ -1547,40 +1361,6 @@ class SolverSettingsCard(ttk.LabelFrame):
         )
 
 
-class FutureChannelDefinitionPanel(ttk.LabelFrame):
-    """Disabled placeholder for later detailed channel-cooling work."""
-
-    def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master, text="Channel Definition - planned", padding=12)
-        self.columnconfigure(1, weight=1)
-        entries = [
-            ("Channel type", "rectangular / trapezoidal / triangular / custom"),
-            ("Number of channels", ""),
-            ("Channel width", ""),
-            ("Channel height", ""),
-            ("Rib thickness", ""),
-            ("Helix angle", ""),
-            ("Variable twist", ""),
-            ("Dimples / turbulators", ""),
-            ("AM roughness model", ""),
-        ]
-        for row, (label, value) in enumerate(entries):
-            ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=3)
-            widget = ttk.Entry(self)
-            widget.grid(row=row, column=1, sticky="ew", pady=3)
-            widget.insert(0, value)
-            widget.configure(state="disabled")
-        ttk.Label(
-            self,
-            text=(
-                "Detailed channel cooling is planned for a later version. MVP uses annulus cooling as a reference model."
-            ),
-            wraplength=980,
-            justify="left",
-            foreground="#667381",
-        ).grid(row=len(entries), column=0, columnspan=2, sticky="ew", pady=(8, 0))
-
-
 class ThermalActionRow(ttk.LabelFrame):
     """Button row for thermal-analysis actions."""
 
@@ -1596,9 +1376,12 @@ class ThermalActionRow(ttk.LabelFrame):
         self._reset_button.grid(row=0, column=1, sticky="w", padx=(10, 0))
         self._plot_button = ttk.Button(self, text="Open Plot Window")
         self._plot_button.grid(row=0, column=2, sticky="w", padx=(10, 0))
+        self._helper_var = tk.StringVar(
+            value="Run a fast annulus reference solve or switch to the committed R-network path for the advanced workflow."
+        )
         ttk.Label(
             self,
-            text="Build the R-network first, then run the station-wise thermal-hydraulic reference calculation from that built network.",
+            textvariable=self._helper_var,
             wraplength=760,
             justify="left",
         ).grid(row=0, column=3, sticky="w", padx=(16, 0))
@@ -1614,6 +1397,9 @@ class ThermalActionRow(ttk.LabelFrame):
 
     def set_calculate_enabled(self, enabled: bool) -> None:
         self._calculate_button.configure(state="normal" if enabled else "disabled")
+
+    def set_helper_text(self, text: str) -> None:
+        self._helper_var.set(text)
 
 
 class ThermalSummaryTiles(ttk.LabelFrame):
@@ -2112,18 +1898,71 @@ class ThermalPlotWindow(tk.Toplevel):
         self._status_var.set(f"Saved plot image to {target_path}")
 
 
+class ThermalRunModeCard(ttk.LabelFrame):
+    """Two-path switch between fast reference solving and the committed network path."""
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master, text="Thermal Run Mode", padding=12)
+        self.columnconfigure(0, weight=1)
+        self._mode_var = tk.StringVar(value=_THERMAL_RUN_MODE_QUICK)
+        self._note_var = tk.StringVar(value="")
+        ttk.Radiobutton(
+            self,
+            text=_THERMAL_RUN_MODE_LABELS[_THERMAL_RUN_MODE_QUICK],
+            value=_THERMAL_RUN_MODE_QUICK,
+            variable=self._mode_var,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            self,
+            text=_THERMAL_RUN_MODE_LABELS[_THERMAL_RUN_MODE_COMMITTED],
+            value=_THERMAL_RUN_MODE_COMMITTED,
+            variable=self._mode_var,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(self, textvariable=self._note_var, wraplength=980, justify="left", foreground="#667381").grid(
+            row=2, column=0, sticky="ew", pady=(8, 0)
+        )
+        self._refresh_note()
+        self._mode_var.trace_add("write", self._handle_mode_changed)
+
+    def bind_changed(self, callback: Callable[[], None]) -> None:
+        self._external_callback = callback
+
+    def get_mode(self) -> str:
+        return self._mode_var.get()
+
+    def set_mode(self, mode: str) -> None:
+        if mode in _THERMAL_RUN_MODE_LABELS:
+            self._mode_var.set(mode)
+
+    def _handle_mode_changed(self, *_args: object) -> None:
+        self._refresh_note()
+        callback = getattr(self, "_external_callback", None)
+        if callback is not None:
+            callback()
+
+    def _refresh_note(self) -> None:
+        if self._mode_var.get() == _THERMAL_RUN_MODE_QUICK:
+            self._note_var.set(
+                "Quick Annulus Reference is the fast sanity/reference calculator. It may build its own simple annulus path internally."
+            )
+        else:
+            self._note_var.set(
+                "Use Committed R-Network consumes the previously committed advanced builder result and does not edit layout here."
+            )
+
+
 class CommittedRNetworkStatusCard(ttk.LabelFrame):
-    """Read-only status card for the committed R-Network consumed by Thermal Analysis."""
+    """Compact committed-network status with optional summary details."""
 
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master, text="Committed R-Network", padding=12)
         self.columnconfigure(0, weight=1)
-        self._status_var = tk.StringVar(
-            value="No committed R-Network available."
-        )
+        self._details_visible = False
+        self._status_var = tk.StringVar(value="No committed R-Network available.")
         self._summary_var = tk.StringVar(
-            value="Go to the R-Network Builder tab, build a draft network and commit it before running Thermal Analysis."
+            value="Build and commit an R-Network in the previous tab before running Thermal Analysis."
         )
+        self._details_var = tk.StringVar(value="")
         ttk.Label(self, textvariable=self._status_var, foreground="#244a6d").grid(row=0, column=0, sticky="w")
         ttk.Label(self, textvariable=self._summary_var, wraplength=980, justify="left").grid(
             row=1, column=0, sticky="ew", pady=(8, 0)
@@ -2134,6 +1973,11 @@ class CommittedRNetworkStatusCard(ttk.LabelFrame):
         self._go_button.grid(row=0, column=0, sticky="w")
         self._rebuild_button = ttk.Button(button_row, text="Rebuild R-Network")
         self._rebuild_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self._toggle_button = ttk.Button(button_row, text="Show network summary", command=self._toggle_details)
+        self._toggle_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self._details_label = ttk.Label(self, textvariable=self._details_var, wraplength=980, justify="left")
+        self._details_label.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self._details_label.grid_remove()
 
     def bind_go_to_builder(self, callback: Callable[[], None]) -> None:
         self._go_button.configure(command=callback)
@@ -2150,7 +1994,9 @@ class CommittedRNetworkStatusCard(ttk.LabelFrame):
             self._summary_var.set(
                 "Build and commit an R-Network in the previous tab before running Thermal Analysis."
             )
+            self._details_var.set("")
             return
+        network_result = committed_network.network_build_result
         if stale_notes or committed_network.status == "stale":
             self._status_var.set(f"Committed R-Network is stale: {committed_network.build_id}")
             note_lines = "\n".join(f"- {note}" for note in stale_notes) if stale_notes else "--"
@@ -2158,24 +2004,48 @@ class CommittedRNetworkStatusCard(ttk.LabelFrame):
                 "Thermal Analysis is blocked until the committed R-Network is rebuilt and recommitted.\n"
                 f"{note_lines}"
             )
-            return
-        warning_count = len(committed_network.network_build_result.warnings)
-        self._status_var.set(f"Committed R-Network ready: {committed_network.build_id}")
-        self._summary_var.set(
-            f"{committed_network.network_build_result.summary}\n"
-            f"{committed_network.network_build_result.setup_summary}\n"
-            f"Warnings: {warning_count}"
+        else:
+            self._status_var.set(f"Committed R-Network ready: {committed_network.build_id}")
+            self._summary_var.set(
+                f"Run source: committed R-Network | {len(network_result.station_networks)} station network(s)"
+            )
+        mechanisms = ", ".join(
+            sorted(
+                {
+                    mechanism.value
+                    for assignment in network_result.segment_assignments
+                    for mechanism in assignment.active_mechanisms
+                }
+            )
+        ) or "--"
+        self._details_var.set(
+            f"Build ID: {committed_network.build_id}\n"
+            f"{network_result.summary}\n"
+            f"{network_result.setup_summary}\n"
+            f"Station networks: {len(network_result.station_networks)}\n"
+            f"Active mechanisms: {mechanisms}\n"
+            f"Warnings: {len(network_result.warnings)}"
         )
+
+    def _toggle_details(self) -> None:
+        self._details_visible = not self._details_visible
+        if self._details_visible:
+            self._details_label.grid()
+            self._toggle_button.configure(text="Hide network summary")
+        else:
+            self._details_label.grid_remove()
+            self._toggle_button.configure(text="Show network summary")
 
 
 class ThermalAnalysisPage(ttk.Frame):
-    """Thermal Analysis consumer page that runs only from a committed R-Network."""
+    """Thermal Analysis page with quick reference and committed-network solve modes."""
 
     def __init__(self, master: tk.Misc, *, unit_preset: UnitPreset) -> None:
         super().__init__(master)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         self._unit_preset = unit_preset
+        self._cached_inputs: ThermalAnalysisInputs | None = None
         self._current_result: ThermalAnalysisResult | None = None
         self._committed_network: CommittedThermalNetwork | None = None
         self._plot_window: ThermalPlotWindow | None = None
@@ -2187,7 +2057,9 @@ class ThermalAnalysisPage(ttk.Frame):
         header = ttk.Frame(content, padding=(0, 0, 0, 6))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Thermal Analysis", font=("Segoe UI", 18, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="Thermal Analysis", font=("Segoe UI", 18, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
         ttk.Label(
             header,
             text="Annulus-cooling MVP reference model for thermal-hydraulic predesign",
@@ -2204,22 +2076,40 @@ class ThermalAnalysisPage(ttk.Frame):
         self._context_card = ExistingDesignContextCard(content, unit_preset=unit_preset)
         self._context_card.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
-        self._network_status_card = CommittedRNetworkStatusCard(content)
-        self._network_status_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self._run_mode_card = ThermalRunModeCard(content)
+        self._run_mode_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self._run_mode_card.bind_changed(self._refresh_run_mode_view)
 
-        self._network_preview = NetworkPreviewPanel(content, unit_preset=unit_preset)
-        self._network_preview.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        self._quick_setup_frame = ttk.Frame(content)
+        self._quick_setup_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        self._quick_setup_frame.columnconfigure(0, weight=3)
+        self._quick_setup_frame.columnconfigure(1, weight=2)
+        self._annulus_card = AnnulusCoolingCard(self._quick_setup_frame, unit_preset=unit_preset)
+        self._annulus_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        right_stack = ttk.Frame(self._quick_setup_frame)
+        right_stack.grid(row=0, column=1, sticky="nsew")
+        right_stack.columnconfigure(0, weight=1)
+        self._solver_card = SolverSettingsCard(right_stack)
+        self._solver_card.grid(row=0, column=0, sticky="nsew")
+        self._radiation_card = RadiationCard(right_stack, unit_preset=unit_preset)
+        self._radiation_card.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+
+        self._advanced_frame = ttk.Frame(content)
+        self._advanced_frame.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        self._advanced_frame.columnconfigure(0, weight=1)
+        self._network_status_card = CommittedRNetworkStatusCard(self._advanced_frame)
+        self._network_status_card.grid(row=0, column=0, sticky="ew")
 
         self._action_row = ThermalActionRow(content)
-        self._action_row.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        self._action_row.grid(row=5, column=0, sticky="ew", pady=(12, 0))
         self._action_row.bind_open_plot(self.open_plot_window)
-        self._action_row.set_calculate_enabled(False)
 
         self._summary_tiles = ThermalSummaryTiles(content, unit_preset=unit_preset)
-        self._summary_tiles.grid(row=5, column=0, sticky="ew", pady=(12, 0))
+        self._summary_tiles.grid(row=6, column=0, sticky="ew", pady=(12, 0))
 
         self._results_table = ThermalStationResultsTable(content, unit_preset=unit_preset)
-        self._results_table.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        self._results_table.grid(row=7, column=0, sticky="nsew", pady=(12, 0))
+        self._refresh_run_mode_view()
 
     def bind_calculate(self, callback: Callable[[], None]) -> None:
         self._action_row.bind_calculate(callback)
@@ -2230,14 +2120,54 @@ class ThermalAnalysisPage(ttk.Frame):
     def bind_go_to_r_network_builder(self, callback: Callable[[], None]) -> None:
         self._network_status_card.bind_go_to_builder(callback)
 
+    def get_run_mode(self) -> str:
+        return self._run_mode_card.get_mode()
+
+    def set_inputs(self, inputs: ThermalAnalysisInputs) -> None:
+        self._cached_inputs = inputs
+        self._annulus_card.set_inputs(inputs)
+        self._solver_card.set_inputs(inputs.solver_settings)
+        self._radiation_card.set_inputs(inputs)
+        self._refresh_run_mode_view()
+
+    def get_inputs(self) -> ThermalAnalysisInputs:
+        partial_inputs = self._annulus_card.get_partial_inputs()
+        solver_settings = self._solver_card.get_settings()
+        inputs = ThermalAnalysisInputs(
+            coolant_mass_flow_kg_per_s=partial_inputs["coolant_mass_flow_kg_per_s"],
+            coolant_type=self._cached_inputs.coolant_type if self._cached_inputs is not None else "RP-1",
+            primary_coolant_nusselt_method=partial_inputs["primary_coolant_nusselt_method"],
+            model_type=partial_inputs["model_type"],
+            coolant_inlet_temperature_k=float(partial_inputs["coolant_inlet_temperature_k"]),
+            annulus_gap_m=float(partial_inputs["annulus_gap_m"]),
+            coolant_roughness_m=float(partial_inputs["coolant_roughness_m"]),
+            injector_pressure_drop_pa=float(partial_inputs["injector_pressure_drop_pa"]),
+            pressure_margin_pa=float(partial_inputs["pressure_margin_pa"]),
+            external_feed_pressure_drop_pa=float(partial_inputs["external_feed_pressure_drop_pa"]),
+            pump_discharge_pressure_pa=partial_inputs["pump_discharge_pressure_pa"],
+            bartz_throat_curvature_mode=partial_inputs["bartz_throat_curvature_mode"],
+            flow_direction=partial_inputs["flow_direction"],
+            solver_settings=solver_settings,
+            radiation_settings=self._radiation_card.get_settings(),
+        )
+        inputs.solver_settings.pressure_mode = partial_inputs["pressure_mode"]
+        self._cached_inputs = inputs
+        return inputs
+
+    def set_profile_station_count(self, station_count: int | None) -> None:
+        self._solver_card.set_profile_station_count(station_count)
+
     def set_unit_preset(self, unit_preset: UnitPreset) -> None:
         self._unit_preset = unit_preset
         self._context_card.set_unit_preset(unit_preset)
+        self._annulus_card.set_unit_preset(unit_preset)
+        self._radiation_card.set_unit_preset(unit_preset)
         self._summary_tiles.set_unit_preset(unit_preset)
         self._results_table.set_unit_preset(unit_preset)
-        self._network_preview._unit_preset = unit_preset
         if self._plot_window is not None and self._plot_window.winfo_exists():
             self._plot_window.set_unit_preset(unit_preset)
+        if self._cached_inputs is not None:
+            self.set_inputs(self._cached_inputs)
 
     def update_design_context(
         self,
@@ -2258,6 +2188,7 @@ class ThermalAnalysisPage(ttk.Frame):
             geometry_source_label=geometry_source_label,
             contour_status_label=contour_status_label,
         )
+        self.set_profile_station_count(profile_station_count)
 
     def set_committed_network(
         self,
@@ -2267,18 +2198,7 @@ class ThermalAnalysisPage(ttk.Frame):
     ) -> None:
         self._committed_network = committed_network
         self._network_status_card.update_network(committed_network, stale_notes=stale_notes)
-        if committed_network is None:
-            self._network_preview.clear()
-            self._action_row.set_calculate_enabled(False)
-            return
-        self._network_preview.set_build_result(committed_network.network_build_result)
-        if stale_notes or committed_network.status == "stale":
-            self._network_preview.mark_stale(stale_notes)
-            self._action_row.set_calculate_enabled(False)
-        else:
-            self._action_row.set_calculate_enabled(
-                committed_network.network_build_result.status != "error"
-            )
+        self._refresh_run_mode_view()
 
     def clear_result(self) -> None:
         self._current_result = None
@@ -2310,6 +2230,29 @@ class ThermalAnalysisPage(ttk.Frame):
         self._plot_window = ThermalPlotWindow(self, unit_preset=self._unit_preset)
         self._plot_window.transient(self.winfo_toplevel())
         self._plot_window.set_result(self._current_result)
+
+    def _refresh_run_mode_view(self) -> None:
+        mode = self._run_mode_card.get_mode()
+        if mode == _THERMAL_RUN_MODE_QUICK:
+            self._quick_setup_frame.grid()
+            self._advanced_frame.grid_remove()
+            self._action_row.set_calculate_enabled(True)
+            self._action_row.set_helper_text(
+                "Runs the station-wise annulus thermal-hydraulic reference calculation directly from the quick reference setup."
+            )
+            return
+        self._quick_setup_frame.grid_remove()
+        self._advanced_frame.grid()
+        committed_network = self._committed_network
+        can_run = (
+            committed_network is not None
+            and committed_network.status != "stale"
+            and committed_network.network_build_result.status != "error"
+        )
+        self._action_row.set_calculate_enabled(can_run)
+        self._action_row.set_helper_text(
+            "Runs Thermal Analysis from the committed R-Network. Rebuild and recommit in the previous tab if this source is stale."
+        )
 
 
 

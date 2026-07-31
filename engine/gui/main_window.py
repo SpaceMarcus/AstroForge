@@ -23,6 +23,9 @@ from engine.geometry_preview import (
 )
 from engine.gui.chamber_geometry_panel import ChamberGeometryPanel
 from engine.gui.current_design_page import CurrentDesignPage
+from engine.gui.cooling_design_page import CoolingDesignPage
+from engine.gui.delivered_performance_page import DeliveredPerformancePage
+from engine.gui.engine_cycle_page import EngineCyclePage
 from engine.gui.input_panel import InputPanel
 from engine.gui.plotting import ContourPlotFrame, OFSweepPlotFrame
 from engine.gui.property_tables_panel import PropertyTablesReportPanel
@@ -42,7 +45,12 @@ from engine.gui.result_panel import (
     SummaryPanel,
 )
 from engine.gui.thermal_analysis_page import ThermalAnalysisPage
-from engine.io import export_engine_preset, load_engine_preset
+from engine.io import (
+    export_engine_preset,
+    export_rpa_config,
+    load_engine_preset,
+    load_rpa_config,
+)
 from engine.models import (
     ExportBundle,
     InputParameters,
@@ -51,7 +59,10 @@ from engine.models import (
     ThermochemistryProfilePoint,
     WallThicknessMode,
 )
-from engine.nozzle_geometry import compute_divergence_efficiency
+from engine.nozzle_geometry import (
+    compute_bell_divergence_efficiency,
+    compute_divergence_efficiency,
+)
 from engine.performance_preview import compute_performance_preview
 from engine.project_state import (
     PROJECT_MODE_LABELS,
@@ -292,6 +303,9 @@ class MainWindow(tk.Tk):
         file_menu.add_command(label="Save As...", command=self.save_engine_preset_as)
         file_menu.add_command(label="Load...", command=self.load_engine_preset_file)
         file_menu.add_separator()
+        file_menu.add_command(label="Import RPA Configuration...", command=self.load_rpa_config_file)
+        file_menu.add_command(label="Export RPA Configuration...", command=self.export_rpa_config_file)
+        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.destroy)
         menu_bar.add_cascade(label="File", menu=file_menu)
 
@@ -379,6 +393,12 @@ class MainWindow(tk.Tk):
         notebook.add(geometry_tab, text="Geometry Details")
         self._geometry_tab = geometry_tab
 
+        performance_tab = ttk.Frame(notebook, padding=8)
+        performance_tab.columnconfigure(0, weight=1)
+        performance_tab.rowconfigure(0, weight=1)
+        notebook.add(performance_tab, text="Delivered Performance")
+        self._performance_tab = performance_tab
+
         injector_tab = ttk.Frame(notebook, padding=8)
         injector_tab.columnconfigure(0, weight=1)
         injector_tab.rowconfigure(0, weight=1)
@@ -390,6 +410,18 @@ class MainWindow(tk.Tk):
         r_network_tab.rowconfigure(0, weight=1)
         notebook.add(r_network_tab, text="R-Network Builder")
         self._r_network_tab = r_network_tab
+
+        cooling_design_tab = ttk.Frame(notebook, padding=8)
+        cooling_design_tab.columnconfigure(0, weight=1)
+        cooling_design_tab.rowconfigure(0, weight=1)
+        notebook.add(cooling_design_tab, text="Cooling Design")
+        self._cooling_design_tab = cooling_design_tab
+
+        engine_cycle_tab = ttk.Frame(notebook, padding=8)
+        engine_cycle_tab.columnconfigure(0, weight=1)
+        engine_cycle_tab.rowconfigure(0, weight=1)
+        notebook.add(engine_cycle_tab, text="Engine Cycle")
+        self._engine_cycle_tab = engine_cycle_tab
 
         thermo_tab = ttk.Frame(notebook, padding=8)
         thermo_tab.columnconfigure(0, weight=1)
@@ -412,8 +444,11 @@ class MainWindow(tk.Tk):
         self._build_initial_design_tab(initial_design_tab)
         self._build_current_design_tab(current_design_tab)
         self._build_geometry_tab(geometry_tab)
+        self._build_delivered_performance_tab(performance_tab)
         self._build_injector_head_tab(injector_tab)
         self._build_r_network_builder_tab(r_network_tab)
+        self._build_cooling_design_tab(cooling_design_tab)
+        self._build_engine_cycle_tab(engine_cycle_tab)
         self._build_thermo_tab(thermo_tab)
         self._build_comparison_tab(comparison_tab)
         self._build_report_tab(report_tab)
@@ -439,6 +474,14 @@ class MainWindow(tk.Tk):
         self._project_management_panel = ProjectManagementPanel(master)
         self._project_management_panel.grid(row=0, column=0, sticky="nsew")
         self._project_management_panel.bind_project_changed(self._on_project_management_changed)
+
+    def _build_cooling_design_tab(self, master: ttk.Frame) -> None:
+        self._cooling_design_page = CoolingDesignPage(master)
+        self._cooling_design_page.grid(row=0, column=0, sticky="nsew")
+
+    def _build_engine_cycle_tab(self, master: ttk.Frame) -> None:
+        self._engine_cycle_page = EngineCyclePage(master)
+        self._engine_cycle_page.grid(row=0, column=0, sticky="nsew")
 
     def _build_overview_tab(self, master: ttk.Frame) -> None:
         self._dashboard_summary_panel = DashboardSummaryPanel(master, unit_preset=self._unit_preset)
@@ -673,6 +716,7 @@ class MainWindow(tk.Tk):
 
         self._r_network_builder_page = RNetworkBuilderPage(master, unit_preset=self._unit_preset)
         self._r_network_builder_page.grid(row=0, column=0, sticky="nsew")
+        self._r_network_builder_page.bind_validate_layout(self.validate_r_network_layout)
         self._r_network_builder_page.bind_build_network(self.build_thermal_network)
         self._r_network_builder_page.bind_commit_network(self.commit_r_network)
         self._r_network_builder_page.bind_reset(self.reset_thermal_analysis_inputs)
@@ -752,6 +796,10 @@ class MainWindow(tk.Tk):
         self._comparison_panel = ComparisonPanel(master, unit_preset=self._unit_preset)
         self._comparison_panel.grid(row=0, column=0, sticky="nsew")
 
+    def _build_delivered_performance_tab(self, master: ttk.Frame) -> None:
+        self._delivered_performance_page = DeliveredPerformancePage(master)
+        self._delivered_performance_page.grid(row=0, column=0, sticky="nsew")
+
     def _build_report_tab(self, master: ttk.Frame) -> None:
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
@@ -786,6 +834,11 @@ class MainWindow(tk.Tk):
         self._property_tables_report_panel.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
 
     def go_to_r_network_builder_tab(self) -> None:
+        try:
+            self._thermal_analysis_inputs = self._thermal_analysis_page.get_inputs()
+            self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+        except Exception:
+            pass
         self._notebook.select(self._r_network_tab)
 
     def go_to_thermal_analysis_tab(self) -> None:
@@ -848,6 +901,7 @@ class MainWindow(tk.Tk):
         self._committed_r_network = None
         self._update_thermal_auto_seed_tracking(self._thermal_analysis_inputs)
         self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
         self._thermal_analysis_page.clear_result()
         self._r_network_builder_page.clear_draft_network_build_result()
         self._seed_geometry_sandbox_from_inputs(example)
@@ -998,9 +1052,24 @@ class MainWindow(tk.Tk):
         self._seed_geometry_sandbox_from_inputs(bundle.inputs)
         committed_divergent_loss_factor = None
         committed_divergent_loss_source = None
-        if bundle.geometry.bell_exit_angle_deg is not None:
+        if bundle.inputs.contour_method.value == "bell":
+            committed_divergent_loss_factor = compute_bell_divergence_efficiency(
+                expansion_ratio=bundle.inputs.expansion_ratio,
+                length_fraction=(
+                    bundle.geometry.top_nozzle_length_fraction_percent
+                    or bundle.inputs.bell_length_fraction_percent
+                    or 80.0
+                ),
+                average_isentropic_exponent=bundle.thermochemistry.gamma or 1.20,
+            )
+            committed_divergent_loss_source = (
+                "RPA equation 20 bell-nozzle divergence correction"
+            )
+        elif bundle.geometry.bell_exit_angle_deg is not None:
             committed_divergent_loss_factor = compute_divergence_efficiency(bundle.geometry.bell_exit_angle_deg)
-            committed_divergent_loss_source = bundle.geometry.top_nozzle_angle_source
+            committed_divergent_loss_source = (
+                "RPA equation 16 conical divergence correction"
+            )
         self._set_committed_divergent_loss(
             divergent_loss_factor=committed_divergent_loss_factor,
             source_text=committed_divergent_loss_source,
@@ -1027,6 +1096,12 @@ class MainWindow(tk.Tk):
         self._geometry_panel.update_results(bundle)
         self._geometry_panel.set_estimated_liner_mass(bundle.geometry.estimated_liner_mass_kg)
         self._comparison_panel.update_results(bundle, self._current_separation_point)
+        self._delivered_performance_page.update_bundle(
+            bundle,
+            combustion_efficiency=eta_cstar_design,
+        )
+        self._cooling_design_page.update_bundle(bundle)
+        self._engine_cycle_page.update_bundle(bundle)
         self._summary_panel.show_default_summary(bundle)
         self._update_current_design_contour_frame(bundle, separation_point=self._current_separation_point)
         self._update_geometry_contour_frame(bundle, separation_point=self._current_separation_point)
@@ -1044,7 +1119,7 @@ class MainWindow(tk.Tk):
         )
 
     def calculate_thermal_analysis(self) -> None:
-        """Run the annulus-cooling reference model from the built R-network."""
+        """Run Thermal Analysis either as quick reference or from the committed R-network."""
 
         self.reset_error()
         analysis_bundle = self._current_bundle
@@ -1054,27 +1129,36 @@ class MainWindow(tk.Tk):
             self._status_var.set("Thermal Analysis not possible yet.")
             return
         try:
-            thermal_inputs = self._r_network_builder_page.get_inputs()
-            committed_network = self._committed_r_network
-            if committed_network is None:
-                raise InputValidationError(["No committed R-Network available. Build and commit it before running Thermal Analysis."])
-            stale, stale_notes = committed_thermal_network_is_stale(
-                analysis_bundle,
-                thermal_inputs,
-                committed_network,
-            )
-            if stale:
-                committed_network.status = "stale"
-                self._thermal_analysis_page.set_committed_network(committed_network, stale_notes=stale_notes)
-                self._r_network_builder_page.set_committed_network(committed_network, stale_notes=stale_notes)
-                raise InputValidationError(
-                    ["Committed R-Network is stale. Rebuild and recommit before solving.", *stale_notes]
+            thermal_inputs = self._thermal_analysis_page.get_inputs()
+            run_mode = self._thermal_analysis_page.get_run_mode()
+            if run_mode == "quick-annulus-reference":
+                result = self._controller.run_thermal_analysis(
+                    analysis_bundle,
+                    thermal_inputs,
                 )
-            result = self._controller.run_thermal_analysis_from_network(
-                analysis_bundle,
-                thermal_inputs,
-                committed_network.network_build_result,
-            )
+            else:
+                committed_network = self._committed_r_network
+                if committed_network is None:
+                    raise InputValidationError(
+                        ["No committed R-Network available. Build and commit it before running Thermal Analysis."]
+                    )
+                stale, stale_notes = committed_thermal_network_is_stale(
+                    analysis_bundle,
+                    thermal_inputs,
+                    committed_network,
+                )
+                if stale:
+                    committed_network.status = "stale"
+                    self._thermal_analysis_page.set_committed_network(committed_network, stale_notes=stale_notes)
+                    self._r_network_builder_page.set_committed_network(committed_network, stale_notes=stale_notes)
+                    raise InputValidationError(
+                        ["Committed R-Network is stale. Rebuild and recommit before solving.", *stale_notes]
+                    )
+                result = self._controller.run_thermal_analysis_from_network(
+                    analysis_bundle,
+                    thermal_inputs,
+                    committed_network.network_build_result,
+                )
         except (InputValidationError, ThermochemistryBackendError, ValueError) as exc:
             self._error_var.set(str(exc))
             self._status_var.set("Thermal Analysis failed.")
@@ -1086,9 +1170,46 @@ class MainWindow(tk.Tk):
 
         self._thermal_analysis_inputs = thermal_inputs
         self._thermal_analysis_result = result
+        self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
         self._thermal_analysis_page.show_result(result)
         self._refresh_thermal_analysis_context()
-        self._status_var.set("Thermal Analysis completed successfully.")
+        if self._thermal_analysis_page.get_run_mode() == "quick-annulus-reference":
+            self._status_var.set("Quick annulus reference Thermal Analysis completed successfully.")
+        else:
+            self._status_var.set("Thermal Analysis from the committed R-Network completed successfully.")
+
+    def validate_r_network_layout(self) -> None:
+        """Validate that the current design and thermal setup can build a network."""
+
+        self.reset_error()
+        analysis_bundle = self._current_bundle
+        guard_errors = self._committed_bundle_guard_errors(purpose="validating the R-Network layout")
+        if guard_errors:
+            self._error_var.set("\n".join(guard_errors))
+            self._r_network_builder_page.set_layout_validation_result(
+                "Layout validation failed. Commit and recalculate Current Design first."
+            )
+            self._status_var.set("R-Network layout validation failed.")
+            return
+        try:
+            thermal_inputs = self._thermal_analysis_page.get_inputs()
+        except (InputValidationError, ThermochemistryBackendError, ValueError) as exc:
+            self._error_var.set(str(exc))
+            self._r_network_builder_page.set_layout_validation_result(
+                "Layout validation failed. Fix the quick Thermal Analysis setup first."
+            )
+            self._status_var.set("R-Network layout validation failed.")
+            return
+        self._thermal_analysis_inputs = thermal_inputs
+        self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+        station_count = max(len(analysis_bundle.thermochemistry_profile) - 1, 0)
+        message = (
+            "Layout validation successful. "
+            f"Committed geometry is ready, annulus baseline covers {station_count} station(s), "
+            "and the draft R-Network can now be built."
+        )
+        self._r_network_builder_page.set_layout_validation_result(message)
+        self._status_var.set("R-Network layout validation completed successfully.")
 
     def build_thermal_network(self) -> None:
         """Build the station-wise thermal R-network from the active annulus setup."""
@@ -1101,7 +1222,7 @@ class MainWindow(tk.Tk):
             self._status_var.set("R-Network build not possible yet.")
             return
         try:
-            thermal_inputs = self._r_network_builder_page.get_inputs()
+            thermal_inputs = self._thermal_analysis_page.get_inputs()
             network_build = self._controller.build_thermal_network(
                 analysis_bundle,
                 thermal_inputs,
@@ -1116,6 +1237,7 @@ class MainWindow(tk.Tk):
             return
 
         self._thermal_analysis_inputs = thermal_inputs
+        self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
         self._current_r_network_draft = network_build
         self._r_network_builder_page.set_draft_network_build_result(network_build)
         self._refresh_thermal_analysis_context()
@@ -1147,7 +1269,7 @@ class MainWindow(tk.Tk):
             self._status_var.set("R-Network commit not possible yet.")
             return
         try:
-            thermal_inputs = self._r_network_builder_page.get_inputs()
+            thermal_inputs = self._thermal_analysis_page.get_inputs()
             stale, stale_notes = thermal_network_build_is_stale(
                 analysis_bundle,
                 thermal_inputs,
@@ -1182,6 +1304,7 @@ class MainWindow(tk.Tk):
         self._current_r_network_draft = None
         self._update_thermal_auto_seed_tracking(self._thermal_analysis_inputs)
         self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+        self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
         self._thermal_analysis_page.clear_result()
         self._r_network_builder_page.clear_draft_network_build_result()
         self._refresh_thermal_analysis_context()
@@ -1316,6 +1439,101 @@ class MainWindow(tk.Tk):
         self._status_var.set(
             f"Engine preset loaded from {Path(selected).name}. Click Calculate to refresh results."
         )
+
+    def load_rpa_config_file(self) -> None:
+        """Import the supported engine subset from an RPA ``.cfg`` file."""
+
+        self.reset_error()
+        default_rpa_examples = Path.home() / "Desktop" / "RPA-2.3.2-standard-win64" / "examples"
+        selected = filedialog.askopenfilename(
+            title="Import RPA configuration",
+            initialdir=str(default_rpa_examples if default_rpa_examples.exists() else Path.cwd()),
+            filetypes=[
+                ("RPA configuration", "*.cfg"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not selected:
+            self._status_var.set("RPA import cancelled.")
+            return
+
+        try:
+            imported = load_rpa_config(selected)
+        except Exception as exc:
+            self._error_var.set(f"RPA import failed: {exc}")
+            self._status_var.set("RPA import failed.")
+            return
+
+        inputs = imported.inputs
+        self._project_state = create_project_state(ProjectMode.SANDBOX)
+        self._reset_initial_design_lock_state()
+        self._reset_working_geometry_states()
+        self._reset_current_design_geometry_lock_state()
+        self._project_mode_var.set(self._project_state.project_mode.value)
+        self._apply_project_state_to_ui(reset_project_data=True)
+        self._initial_input_panel.set_inputs(inputs)
+        self._initial_input_panel.set_editable(True)
+        self._refresh_initial_flow_case_assessment(inputs)
+        self._current_design_linked_to_initial = True
+        self._applied_detail_overrides = self._detail_overrides_from_inputs(inputs)
+        self._input_panel.set_inputs(inputs)
+        self._input_panel.set_current_design_field_locks(self._current_design_locked_fields)
+        self._input_panel.clear_committed_divergent_loss()
+        self._seed_geometry_sandbox_from_inputs(inputs)
+        self._refresh_flow_case_assessment(inputs)
+        self._last_preset_path = None
+        self._selected_sweep_mixture_ratio = inputs.mixture_ratio
+        self._selected_of_var.set(f"{inputs.mixture_ratio:.4f}")
+        self._clear_loaded_results()
+        cycle_imported = self._engine_cycle_page.load_rpa_cycle_config(
+            imported.raw_config
+        )
+
+        warning_text = ""
+        if imported.warnings:
+            warning_text = " Review: " + " ".join(imported.warnings)
+        self._status_var.set(
+            f"Imported RPA case '{imported.case_name}' from {Path(selected).name}."
+            f"{warning_text}"
+            f"{' Engine-cycle data is ready for the Engine Cycle tab.' if cycle_imported else ''}"
+            " Click Calculate to refresh results."
+        )
+
+    def export_rpa_config_file(self) -> None:
+        """Export the visible Current Design inputs as an RPA ``.cfg`` file."""
+
+        self.reset_error()
+        try:
+            inputs = self._collect_current_design_draft_inputs()
+        except Exception as exc:
+            self._error_var.set(f"RPA export failed: {exc}")
+            self._status_var.set("RPA export failed.")
+            return
+
+        selected = self._ask_output_path(
+            title="Export RPA configuration",
+            initial_name="astraforge_engine.cfg",
+            defaultextension=".cfg",
+            filetypes=[
+                ("RPA configuration", "*.cfg"),
+                ("All files", "*.*"),
+            ],
+        )
+        if selected is None:
+            self._status_var.set("RPA export cancelled.")
+            return
+        try:
+            path = export_rpa_config(
+                inputs,
+                selected,
+                case_name=selected.stem,
+                case_info="Exported by AstraForge; review unsupported RPA-only modules.",
+            )
+        except Exception as exc:
+            self._error_var.set(f"RPA export failed: {exc}")
+            self._status_var.set("RPA export failed.")
+            return
+        self._status_var.set(f"RPA configuration exported to {path.name}.")
 
     def export_geometry_json(self) -> None:
         """Export geometry-only data to JSON from the geometry tab."""
@@ -2173,8 +2391,12 @@ class MainWindow(tk.Tk):
 
             if push_inputs_to_page:
                 self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+                self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
                 self._r_network_builder_page.clear_draft_network_build_result()
                 self._current_r_network_draft = None
+        else:
+            self._r_network_builder_page.set_inputs(self._thermal_analysis_inputs)
+            self._thermal_analysis_page.set_inputs(self._thermal_analysis_inputs)
         self._r_network_builder_page.update_design_context(
             current_inputs=current_inputs,
             current_bundle=analysis_bundle,
@@ -2534,6 +2756,9 @@ class MainWindow(tk.Tk):
         self._geometry_panel.clear()
         self._geometry_panel.set_estimated_liner_mass(None)
         self._comparison_panel.clear()
+        self._delivered_performance_page.clear()
+        self._cooling_design_page.clear()
+        self._engine_cycle_page.clear()
         self._input_panel.clear_derived_flow_quantities()
         self._input_panel.clear_performance_preview()
         self._current_design_page.clear_results()
