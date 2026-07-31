@@ -9,13 +9,14 @@ from engine.models import (
     SeparationCriterion,
     ThermochemistryProfilePoint,
 )
+from engine.delivered_performance import schmucker_separation_pressure_ratio
 
 
 def default_separation_criterion() -> SeparationCriterion:
     """Return the currently used first-order separation rule."""
 
     return SeparationCriterion(
-        name="Summerfield-style wall-pressure criterion",
+        name="Schmucker Mach-dependent criterion (RPA equation 39)",
         wall_to_ambient_pressure_ratio_limit=0.40,
     )
 
@@ -38,7 +39,13 @@ def predict_separation_point(
         if static_pressure is None:
             continue
         ratio = static_pressure / ambient_pressure
-        if ratio <= criterion.wall_to_ambient_pressure_ratio_limit:
+        limit = criterion.wall_to_ambient_pressure_ratio_limit
+        if "Schmucker" in criterion.name and point.state.mach_number is not None:
+            try:
+                limit = schmucker_separation_pressure_ratio(point.state.mach_number)
+            except ValueError:
+                continue
+        if ratio <= limit:
             return PredictedSeparationPoint(
                 station_index=point.station_index or 0,
                 x_m=point.x_m,
@@ -48,7 +55,7 @@ def predict_separation_point(
                 criterion_name=criterion.name,
                 reason=(
                     f"Predicted where local wall/static pressure ratio falls to {ratio:.3f} "
-                    f"against the {criterion.wall_to_ambient_pressure_ratio_limit:.2f} limit."
+                    f"against the {limit:.3f} {criterion.name} limit."
                 ),
             )
     return None

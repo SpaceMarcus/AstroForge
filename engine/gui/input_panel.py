@@ -95,10 +95,10 @@ class InputPanel(ttk.LabelFrame):
         self._current_design_value_definitions = (
             (
                 ("F_design", "thrust_estimate"),
-                ("Isp_vac", "isp_vac"),
+                ("Isp_vac,d", "isp_vac"),
             ),
             (
-                ("Isp_sl", "isp_sl"),
+                ("Isp_amb,d", "isp_sl"),
                 ("pc", "chamber_pressure"),
             ),
             (

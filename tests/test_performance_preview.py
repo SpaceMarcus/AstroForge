@@ -60,7 +60,10 @@ def test_compute_performance_preview_uses_eta_cstar_design_for_mdot() -> None:
     assert preview.mass_flow_kg_per_s is not None
     assert abs(preview.mass_flow_kg_per_s - (7.0e6 * 0.0078 / 1662.5)) < 1.0e-9
     assert preview.cf_base == 1.60
-    assert preview.thrust_estimate_n == 0.95 * 1.60 * 7.0e6 * 0.0078
+    assert preview.cf_design == 1.79 - 20.0 * 101_325.0 / 7.0e6
+    assert preview.thrust_estimate_n == preview.cf_design * 7.0e6 * 0.0078
+    assert preview.isp_vac_s == 0.95 * 320.0
+    assert preview.isp_vac_ideal_s == 320.0
     assert preview.thrust_deviation_exceeds_threshold is True
     assert preview.bell_start_angle_deg == 31.5
     assert preview.exit_angle_deg == 9.5
@@ -81,8 +84,10 @@ def test_compute_performance_preview_applies_committed_divergent_loss_when_enabl
 
     assert preview.divergent_loss_enabled is True
     assert preview.cf_base == 1.60
-    assert preview.cf_design == 1.60 * 0.98
-    assert preview.thrust_estimate_n == 0.95 * (1.60 * 0.98) * 7.0e6 * 0.0078
+    expected_cf = 0.98 * 1.79 - 20.0 * 101_325.0 / 7.0e6
+    assert preview.cf_design == expected_cf
+    assert preview.thrust_estimate_n == expected_cf * 7.0e6 * 0.0078
+    assert preview.isp_vac_s == 0.95 * 0.98 * 320.0
 
 
 def test_eta_cstar_band_returns_expected_color_bands() -> None:

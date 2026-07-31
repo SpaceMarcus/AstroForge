@@ -176,6 +176,7 @@ class RocketCEABackend(ThermochemistryBackend):
                 pc_psia=pc_psia,
                 pa_psia=pa_psia,
                 c_star_m_s=c_star_m_s,
+                isp_vac_s=isp_vac_s,
                 inputs=inputs,
                 flags=flags,
             )
@@ -464,6 +465,7 @@ class RocketCEABackend(ThermochemistryBackend):
         pc_psia: float,
         pa_psia: float,
         c_star_m_s: float,
+        isp_vac_s: float,
         inputs: InputParameters,
         flags: _ModeFlags,
     ) -> tuple[float | None, float | None, str | None]:
@@ -472,6 +474,13 @@ class RocketCEABackend(ThermochemistryBackend):
         ambient_mode: str | None = None
         isp_amb_s: float | None = None
         cf_amb: float | None = None
+
+        if pa_psia <= 0.0:
+            return (
+                isp_vac_s,
+                isp_vac_s * STANDARD_GRAVITY / c_star_m_s,
+                "vacuum",
+            )
 
         if hasattr(cea, "estimate_Ambient_Isp"):
             isp_amb_candidate = cea.estimate_Ambient_Isp(
