@@ -1,0 +1,11 @@
+import {cp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+await mkdir(resolve(root,'dist'),{recursive:true});
+for(const path of ['index.html','src'])await cp(resolve(root,path),resolve(root,'dist',path),{recursive:true});
+await cp(resolve(root,'public'),resolve(root,'dist'),{recursive:true});
+const table=JSON.parse(await readFile(resolve(root,'dist/thermo.json'),'utf8'));
+if(!table)throw Error('Missing thermo data');
+await writeFile(resolve(root,'dist/build-info.json'),JSON.stringify({product:'AstroForge 2.0 Lite',version:'2.0.0',builtAt:new Date().toISOString()}));
+console.log('Built standalone app in lite/dist');
