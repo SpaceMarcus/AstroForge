@@ -1,5 +1,30 @@
 # AstroForge 2.0 Lite Prüfstand
 
+## Erweiterung 2.2 · Geometriegekoppelte Kanalkühlung
+
+4. November 2026. **82 automatisierte Tests bestanden**. Neue Abdeckung: SI-Bartz-Referenz, quadratischer Laminar-Kanal, Machzahl, Enthalpie-/kinetischer Energieabschluss, Stoffdaten- und Phasengrenzen, Kanalgeometrie, Kammerdruckabhängigkeit, Druckrekonstruktion für hohe Verluste, Wärmeübertragung in den nachgeschalteten Feed-Pfad, Zellrandtemperaturen, Netzverfeinerung, Legacy-Erhalt, Modellwechsel/Undo, Profilbedienung und sichere Ausgabe.
+
+Neue elektrische und Turbinenvorlage: 10 kN Hauptschub, 30 bar, O/F 2,0, L* 0,5 m, 120 Kanäle, 0,75 mm Kanalhöhe und 20 bar Quellen. Diese expliziten Beispielparameter ersetzen keine importierten Entwürfe. Berechnete Werte: Wandmaximum 874,17 K bei vorgegebener Grenze 900 K, Kühlmittelaustritt 610,38 K, Wärmeaufnahme 1223,51 kW, Kanal-Gesamtdruckverlust 11,006 bar. 120 Unterteilungen plus Konturstützstellen ergeben 184 Zellen und 185 Randpunkte; das Profil enthält 369 Datensätze. Die Randpunkte werden zur Maximumsuche, nicht nochmals zur Wärmeintegration verwendet.
+
+Die Prüfung mit 40/120/400 Unterteilungen verändert das Wandmaximum der Beispielvorlage um weniger als 0,003 K. Das belegt numerische Stabilität dieses Beispiels, keine allgemeine Genauigkeit der physikalischen Näherungen. Der Gesamtenthalpie-/Geschwindigkeitsabschluss liegt im geprüften Lauf deutlich unter 0,01 W.
+
+Browserabläufe bei 1440 × 900 und 390 × 844:
+
+- Bestehendes 2.1-Projekt bleibt beim Laden im alten Wärmebilanzmodell berechenbar.
+- Kühlkanal-Inspector direkt über Brennkammer geöffnet; neue Vorlage berechnet.
+- Kanalhöhe auf 2 mm erhöht: Wandtemperaturwarnung im Arbeitsraum und Profil. Auf 0,6 mm reduziert: höherer erforderlicher Quelldruck und erkannte Unterversorgung. Damit ist der Rückweg ins Feed-Budget sichtbar geprüft.
+- Ungültige Kanalhöhe 0 bleibt markiert und blockiert die Rechnung; Graph und Ergebnisse werden als veraltet behandelt.
+- Temperatur-/Wärmestrom-/Druckansicht und Stationsauswahl bedient; geöffnete Stationstabelle bleibt nach Auswahl geöffnet.
+- Finaler CSV-Download: 369 Zeilen, davon 184 Zellen und 185 Randpunkte, mit statischem Druckbezug, Gas-/Kühlmittelmodell und Energieresiduum.
+- Finale Diagramme ohne horizontales Dokument-Überlaufen auf 390 Pixeln; keine Browser-Konsolenfehler.
+- Server beendet, Anwendung aus Cache neu geladen und Kanalkühlung erneut berechnet: identische Kennwerte (874 K, 11,01 bar, 610,4 K).
+
+Windows-Paket mit finalem Webstand neu gebaut und EXE-Smoke-Test bestanden. Physisches Android-Gerät und sauberer Windows-PC weiterhin nicht abgenommen. Das Paket heißt `AstroForge-Lite-2.2-Cooling-Windows.zip`; GitHub enthält den Quellstand. Der alte private Webauftritt bleibt unverändert.
+
+Modellgrenzen: n-Dodecan als RP-1-Ersatz, feste CEA-Gasrandbedingungen mit frozen-Transportdaten, stationäres einphasiges 1D-Modell. Kein chemisch-thermischer Kreislaufschluss, keine Strahlung, Verkokung, Siedung, Festigkeit oder Lebensdauer. Wandtemperaturgrenze ist eine Nutzervorgabe, keine zertifizierte Werkstoffzulässigkeit. Quellen und Gleichungen: MODELS.md.
+
+---
+
 ## Erweiterung 2.1 · Cycle-Komponenten
 
 4. November 2026. **54 automatisierte Tests bestanden**, einschließlich der bisherigen Regressionstests. Neue Prüfungen betreffen Pumpendruckarbeit, Wellenbedarf/Drehmoment, unabhängige Wellen, Wärmebilanz, Treibgasverbrauch, Turbinenleistung, Abgas-Druckschub, fehlende Zuordnungen und negative Druckbudgets. Vorlagen-Roundtrip, mechanische Ergebnisinvalidierung, HTML-Escaping und Darstellung von Leistungsdefiziten wurden ebenfalls geprüft.

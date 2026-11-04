@@ -1,3 +1,5 @@
+import {coolingResults} from './cooling-ui.js';
+
 /** Inspector fields for the bounded component cycle models. */
 export const COMPONENT_FIELDS = {
   pump: [
@@ -33,7 +35,7 @@ export const COMPONENT_FIELDS = {
 
 export const COMPONENT_NOTES = {
   pump: 'Inkompressible Druckarbeit bei vorgegebener Druckerhöhung und konstanten Stoffwerten. Der Wirkungsgrad bestimmt den Wellenleistungsbedarf; keine Pumpenkennlinie oder Kavitationsberechnung.',
-  regen: 'Vorgegebene Wärmeaufnahme und Druckverlust. Die Austrittstemperatur folgt aus Wärmestrom, Massenstrom und konstantem cp. Kein Kanal-, Wandtemperatur- oder Kühlungsnachweis; die CEA-Thermochemie bleibt unverändert.',
+  regen: 'Kanalmodell: Geometrie und Brennstoffmassenstrom werden aus dem Entwurf übernommen; thermische Profile und Druckverlust werden berechnet. Altes Vorgabemodell: Wärmeaufnahme, Druckverlust und cp bleiben Eingaben. Die CEA-Thermochemie wird nicht mit der Kühlung rückgekoppelt.',
   shaft: 'Die Welle vergleicht Pumpenbedarf mit Turbinenleistung nach mechanischem Wirkungsgrad und externer Antriebsleistung. Die externe Leistung wird als an der Welle verfügbar vorgegeben. Drehzahl dient der Drehmomentberechnung; keine Drehzahldynamik.',
   gasSource: 'Separat vorgegebener Heißgasstrom mit konstantem cp und γ. Zusätzlicher Massenstrom zählt zum Systemverbrauch. Keine berechnete Gasgeneratorchemie und keine automatische Aufteilung aus den Hauptversorgungspfaden.',
   turbine: 'Idealgas-Expansion zwischen vorgegebenen Drücken mit konstantem cp und γ. Der isentrope Wirkungsgrad bestimmt Temperaturabfall und Leistung; keine Turbinenkennlinie.',
@@ -41,10 +43,11 @@ export const COMPONENT_NOTES = {
 };
 
 /** Render the cycle ledger. labels optionally maps node IDs to project labels. */
-export function cycleResults(result, esc, fmt, labels = {}) {
+export function cycleResults(result, esc, fmt, labels = {}, coolingOptions = {}) {
   const c = result?.cycle;
   if (!result?.ok || !c) return '';
   const pumps = c.pumps || [], shafts = c.shafts || [], turbines = c.turbines || [], cooling = c.cooling || [];
+  const legacyCooling = cooling.filter(r => r.mode !== 'channels');
   if (!pumps.length && !shafts.length && !turbines.length && !cooling.length && !c.auxiliary) return '';
   const name = id => esc(labels[id] || id || 'Komponente');
   const val = (n, digits = 2) => Number.isFinite(n) ? esc(fmt(n, digits)) : '—';
@@ -73,7 +76,7 @@ export function cycleResults(result, esc, fmt, labels = {}) {
   if (turbines.length) html += `<div class="section-label">TURBINEN</div><div class="cycle-component-list">${turbines.map(t => card(t.nodeId, 'IDEALGAS-EXPANSION',
     row('Leistung vor Wellenverlust', t.powerKW, 'kW') + row('Eintrittsdruck', t.inletPressureBar, 'bar') + row('Austrittsdruck', t.outletPressureBar, 'bar') + row('Eintrittstemperatur', t.inletTemperatureK, 'K', 1) + row('Austrittstemperatur', t.outletTemperatureK, 'K', 1) + row('Massenstrom', t.massFlowKgS, 'kg/s', 3))).join('')}</div>`;
 
-  if (cooling.length) html += `<div class="section-label">WÄRMEAUFNAHME</div><div class="cycle-component-list">${cooling.map(r => card(r.nodeId, 'VORGEGEBENER WÄRMESTROM',
+  if (legacyCooling.length) html += `<div class="section-label">WÄRMEAUFNAHME · VORGABEMODELL</div><div class="cycle-component-list">${legacyCooling.map(r => card(r.nodeId, 'VORGEGEBENER WÄRMESTROM',
     row('Wärmeaufnahme', r.heatKW, 'kW') + row('Druckverlust', r.dropBar, 'bar') + row('Eintrittstemperatur', r.inletTemperatureK, 'K', 1) + row('Austrittstemperatur', r.outletTemperatureK, 'K', 1) + row('Massenstrom', r.massFlowKgS, 'kg/s', 3))).join('')}</div>`;
 
   const a = c.auxiliary;
@@ -83,6 +86,7 @@ export function cycleResults(result, esc, fmt, labels = {}) {
       <div class="cycle-system-summary"><div class="cycle-system-value"><span>Gesamtschub</span><strong>${val(a.systemThrustN / 1000)}<small>kN</small></strong><small>Haupttriebwerk + separate Abgasdüse</small></div><div class="cycle-system-value"><span>System-Isp</span><strong>${val(a.systemIspS, 1)}<small>s</small></strong><small>Mit zusätzlichem Heißgasmassenstrom</small></div></div>
       <div class="pressure-row"><span>Gesamtmassenstrom</span><strong>${val(a.totalMassFlowKgS, 3)} kg/s</strong></div>`;
   }
-  html += `<p class="cycle-caveat">${shafts.length ? 'Eine Leistungsreserve ist kein gelöster Drehzahlgleichgewichtspunkt. ' : ''}${cooling.length ? 'Wärmeaufnahme und cp sind Vorgaben; Wandtemperatur und Kühlkanäle werden nicht ausgelegt. ' : ''}${a ? 'Der Heißgasstrom ist eine separate Randbedingung. Gasgeneratorchemie, Abzweige und vollständiger Cycle-Abschluss sind nicht gelöst. ' : ''}Keine Kennfeld-, Transienten- oder Lebensdauerbewertung.</p></section>`;
+  html += `<p class="cycle-caveat">${shafts.length ? 'Eine Leistungsreserve ist kein gelöster Drehzahlgleichgewichtspunkt. ' : ''}${legacyCooling.length ? 'Im Vorgabemodell sind Wärmeaufnahme und cp Eingaben; Wandtemperatur und Kühlkanäle werden damit nicht ausgelegt. ' : ''}${a ? 'Der Heißgasstrom ist eine separate Randbedingung. Gasgeneratorchemie, Abzweige und vollständiger Cycle-Abschluss sind nicht gelöst. ' : ''}Keine Kennfeld-, Transienten- oder Lebensdauerbewertung.</p></section>`;
+  html += coolingResults(result, esc, fmt, labels, coolingOptions);
   return html;
 }

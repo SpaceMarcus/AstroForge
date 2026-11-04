@@ -1,3 +1,4 @@
+import {coolantAt,staticPressureAt,solveCooling,CHANNEL_BOUNDS} from './cooling.js';
 /** Bounded ideal predesign, not a transient or general network solver. */
 const G0 = 9.80665;
 const TYPES = new Set(['source','line','valve','injector','chamber','nozzle','sensor','pump','regen','shaft','gasSource','turbine','exhaust']);
@@ -125,18 +126,23 @@ function geometryFor(design,area){
   return {throatRadiusM:rt,exitRadiusM:re,chamberRadiusM:rc,chamberLengthM:chamberLength,nozzleLengthM:nozzleLength,contour};
 }
 
-function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle){
+function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,context=null){
   const source=path[0],fluid=FLUIDS[medium],stations={},drops=new Map(),temperatures=new Map();
   let temperature=source.params.temperatureK;
   const firstLine=path.find(n=>n.type==='line');let boreMm=firstLine.params.diameterMm;
   for(const node of path){
     temperatures.set(node.id,temperature);
+    const localPressure=context?.pressures[node.id]??pcBar+injectorDrop+5;
+    const localBore=node.type==='line'?node.params.diameterMm:boreMm;
+    const propertyPressure=context?staticPressureAt(context.data,temperature,localPressure,Math.PI*(localBore/1000)**2/4,mdot):localPressure;
+    const liquid=context?coolantAt(context.data,temperature,propertyPressure):null;
+    const localFluid=liquid?{rho:liquid.rhoKgM3,mu:liquid.muPaS}:fluid;
     let drop=0;
     if(node.type==='line'||node.type==='valve'){
       if(node.type==='line')boreMm=node.params.diameterMm;
-      const diameter=boreMm/1000,area=Math.PI*diameter**2/4,velocity=mdot/(fluid.rho*area),dynamic=fluid.rho*velocity**2/2;
+      const diameter=boreMm/1000,area=Math.PI*diameter**2/4,velocity=mdot/(localFluid.rho*area),dynamic=localFluid.rho*velocity**2/2;
       if(node.type==='line'){
-        const re=fluid.rho*velocity*diameter/fluid.mu,rough=node.params.roughnessMm/1000;
+        const re=localFluid.rho*velocity*diameter/localFluid.mu,rough=node.params.roughnessMm/1000;
         const laminar=64/re,turbulent=(-1.8*Math.log10((rough/(3.7*diameter))**1.11+6.9/re))**-2;
         const fraction=Math.min(1,Math.max(0,(re-2300)/1700));
         const friction=re<2300?laminar:re>4000?turbulent:laminar+(turbulent-laminar)*fraction;
@@ -148,10 +154,15 @@ function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle)
     }
     if(node.type==='pump'){
       drop=-node.params.riseBar;
-      const hydraulicPowerKW=mdot*node.params.riseBar*1e5/fluid.rho/1000;
+      const hydraulicPowerKW=mdot*node.params.riseBar*1e5/localFluid.rho/1000;
       cycle.pumps.push({nodeId:node.id,shaftId:node.params.shaftId,pressureRiseBar:node.params.riseBar,hydraulicPowerKW,shaftPowerKW:hydraulicPowerKW/node.params.efficiency,massFlowKgS:mdot});
     }
-    if(node.type==='regen'){
+    if(node.type==='regen'&&node.params.mode==='channels'){
+      const result=solveCooling({params:node.params,geometry:context.geometry,design:context.design,thermo:context.thermo,data:context.data,massFlowKgS:mdot,inletTemperatureK:temperature,inletPressureBar:localPressure});
+      cycle.cooling.push({nodeId:node.id,...result});drop=result.dropBar;temperature=result.outletTemperatureK;
+      warnings.push(...result.warnings);if(!result.feasible)warnings.push('Kühlkanal: zulässige Wandtemperatur überschritten.');
+    }
+    if(node.type==='regen'&&node.params.mode!=='channels'){
       drop=node.params.dropBar;
       const outletTemperature=temperature+node.params.heatKW*1000/(mdot*node.params.cpJkgK);
       cycle.cooling.push({nodeId:node.id,heatKW:node.params.heatKW,dropBar:drop,cpJkgK:node.params.cpJkgK,inletTemperatureK:temperature,outletTemperatureK:outletTemperature,massFlowKgS:mdot});
@@ -175,8 +186,11 @@ function validateExtended(graph,design,errors){
   const check=(node,key,min,max,label=key)=>validateNumber(node.params[key],min,max,label,node,errors);
   for(const path of Object.values(graph.paths))for(const n of path){
     if(n.type==='pump'){check(n,'riseBar',.01,150,'Pumpendruckerhöhung [bar]');check(n,'efficiency',.05,1,'Pumpenwirkungsgrad');}
-    if(n.type==='regen'){check(n,'heatKW',0,5000,'Aufgeprägte Wärme [kW]');check(n,'dropBar',0,100,'Kühldruckverlust [bar]');check(n,'cpJkgK',100,10000,'Kühlmittel-cp [J/(kg K)]');}
+    if(n.type==='regen'&&n.params.mode!=='channels'){if(n.params.mode!==undefined&&n.params.mode!=='lumped')errors.push({nodeId:n.id,message:'Unbekanntes Kühlungsmodell.'});check(n,'heatKW',0,5000,'Aufgeprägte Wärme [kW]');check(n,'dropBar',0,100,'Kühldruckverlust [bar]');check(n,'cpJkgK',100,10000,'Kühlmittel-cp [J/(kg K)]');}
   }
+  const channelNodes=Object.values(graph.paths).flat().filter(n=>n.type==='regen'&&n.params.mode==='channels');
+  if(channelNodes.length>1)errors.push({message:'Maximal eine geometriegekoppelte Kanalkühlung ist erlaubt.'});
+  for(const n of channelNodes)for(const [key,[min,max]] of Object.entries(CHANNEL_BOUNDS)){check(n,key,min,max,key);if(['stations','channelCount'].includes(key)&&!Number.isInteger(n.params[key]))errors.push({nodeId:n.id,message:key+' muss ganzzahlig sein.'});}
   for(const n of graph.shafts){check(n,'efficiency',.05,1,'Mechanischer Wirkungsgrad');check(n,'rpm',100,200000,'Drehzahl [rpm]');check(n,'motorKW',0,10000,'Antriebsleistung an der Welle [kW]');}
   if(graph.auxiliary){
     const {source:s,turbine:t,exhaust:e}=graph.auxiliary;
@@ -226,11 +240,11 @@ function evaluateCycle(graph,design,mdot,cycle,warnings,errors){
   }
   if(cycle.pumps.length)warnings.push('Pumpen: inkompressible Druckarbeit ṁ·Δp/(ρ·η), feste Druckerhöhung. Kein Kennfeld, NPSH-/Kavitationsnachweis oder Drehzahl-Betriebspunkt; keine Pumpenerwärmung.');
   if(cycle.shafts.length)warnings.push('Wellenbilanz ist ein Leistungsbudget bei vorgegebener Drehzahl, keine automatisch geschlossene Drehmomentgleichung. Motorleistung gilt bereits an der Welle; mechanischer Wirkungsgrad wirkt auf Turbinenleistung.');
-  if(cycle.cooling.length)warnings.push('Regenerativblock: aufgeprägte Wärme mit ΔT=Q/(ṁ·cp) und vorgegebenem Druckverlust. Keine Wandtemperatur, Kanalgeometrie oder thermische Freigabe; Fluidwerte bleiben trotz Erwärmung konstant. Die Wärmequelle ist extern aufgeprägt, ohne Energieabschluss mit Brennkammer oder Hauptdüse.');
+  if(cycle.cooling.some(c=>c.mode!=='channels'))warnings.push('Regenerativblock: aufgeprägte Wärme mit ΔT=Q/(ṁ·cp) und vorgegebenem Druckverlust. Keine Wandtemperatur, Kanalgeometrie oder thermische Freigabe; Fluidwerte bleiben trotz Erwärmung konstant. Die Wärmequelle ist extern aufgeprägt, ohne Energieabschluss mit Brennkammer oder Hauptdüse.');
   return stations;
 }
 
-export function solveProject(project,data){
+export function solveProject(project,data,coolingData){
   const errors=[],warnings=[];
   if(!project||typeof project!=='object'||!project.design)return {ok:false,errors:[{message:'Kein gültiges Triebwerksprojekt.'}],warnings};
   const design=project.design;
@@ -271,20 +285,37 @@ export function solveProject(project,data){
   const area=design.thrustN/(cf*design.pcBar*1e5),mdot=design.pcBar*1e5*area/thermo.cstarMS;
   const fuel=mdot/(1+design.of),ox=mdot-fuel;
   const cycle={pumps:[],cooling:[],turbines:[],shafts:[]};
-  const fuelResult=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,errors,warnings,cycle);
+  let fuelResult;
+  const geometry=geometryFor(design,area),channels=graph.paths.fuel.some(n=>n.type==='regen'&&n.params.mode==='channels');
+  try{
+    if(channels){
+      const pressures=Object.fromEntries(graph.paths.fuel.map(n=>[n.id,coolingData?.coolant?.axes?.pressureBar?.at(-1)??200]));let converged=false;
+      for(let iteration=0;iteration<60;iteration++){
+        const trialCycle={pumps:[],cooling:[]},trialWarnings=[],trialErrors=[];
+        const trial=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,trialErrors,trialWarnings,trialCycle,{pressures,data:coolingData,geometry,design,thermo});
+        if(trialErrors.length){errors.push(...trialErrors);break;}
+        let residual=0;for(const [id,s] of Object.entries(trial.stations)){residual=Math.max(residual,Math.abs(pressures[id]-s.pressureBar));pressures[id]=.5*(pressures[id]+s.pressureBar);}
+        if(residual<1e-5){fuelResult=trial;cycle.pumps.push(...trialCycle.pumps);cycle.cooling.push(...trialCycle.cooling);warnings.push(...trialWarnings);converged=true;break;}
+      }
+      if(!converged&&!errors.length)errors.push({message:'Gekoppeltes Kühlungs-Druckbudget konvergiert nicht.'});
+      if(converged)for(const station of Object.values(fuelResult.stations))coolantAt(coolingData,station.temperatureK,station.pressureBar);
+      warnings.push('Kanalkühlung: stationäres 1D-Gegenstrommodell mit n-Dodecan als RP-1-Ersatz. Bartz, rechteckige Kanäle und Rippen; keine Strahlung, Verkokung, Siedung oder Strukturlebensdauer. CEA-Gaszustand bleibt feste Randbedingung; Bartz mit frozen-Kammertransport und konstantem frozen-gamma, isentroper lokaler Machzahl und Recoverytemperatur; kein chemisch-thermischer Kreislaufschluss.');
+    }else fuelResult=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,errors,warnings,cycle);
+  }catch(e){errors.push({nodeId:graph.paths.fuel.find(n=>n.params.mode==='channels')?.id,message:e.message});}
+  if(errors.length)return {ok:false,errors,warnings};
   const oxResult=evaluateFeed(graph.paths.ox,'ox',ox,design.pcBar,graph.injector.params.oxDropBar,errors,warnings,cycle);
   const auxiliaryStations=evaluateCycle(graph,design,mdot,cycle,warnings,errors);
   if(errors.length)return {ok:false,errors,warnings};
   warnings.push('Idealer Vorentwurf: keine Verbrennungs-, Reibungs- oder Divergenzverluste; kein thermischer oder struktureller Nachweis.');
-  warnings.push('Versorgung mit konstanten Stoffwerten, außerhalb eines Kühlblocks isotherm; Pfaddrücke sind erforderliche Gesamtdruckbudgets am Zielbetriebspunkt, keine gelösten lokalen statischen Istdrücke. Höhenunterschiede werden nicht berücksichtigt.');
+  warnings.push((channels?'Brennstoff mit temperatur- und druckabhängigen Ersatzstoffwerten; Oxidator mit konstanten Stoffwerten, ':'Versorgung mit konstanten Stoffwerten, ')+ ' außerhalb eines Kühlblocks isotherm; Pfaddrücke sind erforderliche Gesamtdruckbudgets am Zielbetriebspunkt, keine gelösten lokalen statischen Istdrücke. Höhenunterschiede werden nicht berücksichtigt.');
   warnings.push('CEA-Reaktanten: RP-1 bei 298,15 K und LOX bei 90,18 K. Die einstellbaren Versorgungstemperaturen sind nicht an die CEA-Thermochemie gekoppelt.');
-  warnings.push(FLUIDS.fuel.label+'; '+FLUIDS.ox.label+'.');
+  warnings.push((channels?'RP-1-Ersatz: CoolProp n-Dodecan, einphasig und nur innerhalb der Tabelle':FLUIDS.fuel.label)+'; '+FLUIDS.ox.label+'.');
   warnings.push('Ventilquerschnitt = Querschnitt der vorangehenden Leitung (ohne Vorgänger: erste Leitung im Pfad).');
   warnings.push('2D-Glockenkontur: glatte kubische Visualisierungsnäherung, keine Rao-/MoC-Auslegung. L* bezieht sich hier auf das zylindrische Kammervolumen.');
   if(design.paBar>thermo.peBar)warnings.push('Überexpandierte Düse: ideale anliegende Strömung angenommen; Ablösung wird in Lite nicht berechnet.');
   return {ok:true,errors,warnings,cycle,
     performance:{thrustN:design.thrustN,ispS:cf*thermo.cstarMS/G0,cstarMS:thermo.cstarMS,tcK:thermo.tcK,mdotKgS:mdot,fuelKgS:fuel,oxKgS:ox,cf},
-    geometry:geometryFor(design,area),feeds:{fuel:fuelResult.feed,ox:oxResult.feed},
+    geometry,feeds:{fuel:fuelResult.feed,ox:oxResult.feed},
     stations:{...fuelResult.stations,...oxResult.stations,...auxiliaryStations,[graph.injector.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:null,fuelDropBar:graph.injector.params.fuelDropBar,oxDropBar:graph.injector.params.oxDropBar},[graph.chamber.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:0},[graph.nozzle.id]:{pressureBar:thermo.peBar,temperatureK:null,massFlowKgS:mdot,dropBar:null}},
-    meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,domain:'LOX/RP-1 · Gleichgewicht · pc 10–80 bar · O/F 2–3,2 · ε 4–40 · CEA-Interpolation ohne Extrapolation',interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:'Darcy–Weisbach / Haaland, konstante Stoffwerte',pressureBasis:'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation',formulaSources:[{model:'Pump power',url:'https://www.energy.gov/sites/default/files/2014/05/f16/pump.pdf'},{model:'Ideal-gas turbine work',url:'https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html'},{model:'Nozzle expansion',url:'https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html'},{model:'Thrust and specific impulse',url:'https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/'}]}};
+    meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,domain:'LOX/RP-1 · Gleichgewicht · pc 10–80 bar · O/F 2–3,2 · ε 4–40 · CEA-Interpolation ohne Extrapolation',interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:channels?'Darcy–Weisbach / Haaland; fuel n-dodecane T/p table, constant LOX':'Darcy–Weisbach / Haaland, konstante Stoffwerte',coolingModel:channels?'1D counterflow, frozen chamber transport/Bartz, fixed gas boundary':null,coolingSource:channels?coolingData.source:null,pressureBasis:channels?'feed: required total-pressure budget; cooling: static pressure march plus dynamic conversion, no elevation':'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation',formulaSources:[{model:'Pump power',url:'https://www.energy.gov/sites/default/files/2014/05/f16/pump.pdf'},{model:'Ideal-gas turbine work',url:'https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html'},{model:'Nozzle expansion',url:'https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html'},{model:'Thrust and specific impulse',url:'https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/'}]}};
 }

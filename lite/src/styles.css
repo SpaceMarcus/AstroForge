@@ -544,3 +544,82 @@ input[aria-invalid="true"] { border-color: var(--red); background: #291e1d; }
   .cycle-system-value { padding: 13px; }
   .cycle-system-value strong { font-size: 19px; }
 }
+
+/* Geometry-resolved regenerative cooling. Charts remain readable at phone width. */
+.cooling-results { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); min-width: 0; }
+.cooling-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+.cooling-heading .eyebrow { color: var(--cyan); margin-bottom: 7px; }
+.cooling-heading h2 { margin: 0; font-size: 20px; font-weight: 500; }
+.cooling-heading > .badge { margin-top: 2px; }
+.cooling-results > .help-text { margin: 0 0 18px; }
+.cooling-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-radius: 6px; margin: 16px 0; }
+.cooling-metric { background: #182126; padding: 14px 16px; min-width: 0; }
+.cooling-metric > span { display: block; font-size: 10px; color: var(--muted); line-height: 1.4; margin-bottom: 8px; }
+.cooling-metric strong { display: block; font-family: var(--mono); font-size: 22px; font-weight: 450; letter-spacing: -.5px; line-height: 1.2; }
+.cooling-metric strong small { font-family: var(--font); font-size: 10px; font-weight: 400; color: var(--muted); letter-spacing: 0; margin-left: 5px; }
+.cooling-metric > small { display: block; font-size: 10px; color: var(--quiet); margin-top: 6px; }
+.cooling-chart-shell { margin-top: 22px; border: 1px solid var(--line); border-radius: 6px; background: #11191d; overflow: hidden; }
+.cooling-chart-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.cooling-chart-toolbar > span { color: var(--muted); font-size: 10px; }
+.cooling-chart-options { display: flex; gap: 3px; }
+.cooling-chart-options button { min-height: 30px; padding: 5px 8px; border-color: transparent; border-radius: 4px; font-size: 10px; color: var(--muted); background: transparent; }
+.cooling-chart-options button[aria-pressed="true"] { color: var(--cyan); border-color: #3d6672; background: #203039; }
+.cooling-chart { display: block; width: 100%; height: auto; aspect-ratio: 560 / 290; overflow: visible; color: var(--muted); }
+.cooling-chart text { font-family: var(--font); }
+.cooling-chart .axis-tick { fill: #a7b3ba; font-family: var(--mono); font-size: 11px; }
+.cooling-chart .axis-label { fill: #bcc7cd; font-size: 11px; }
+.cooling-chart .throat-label { fill: #9ca9b2; font-size: 10px; }
+.cooling-chart .station-marker { stroke: #e4eae8; stroke-width: 1; stroke-dasharray: 2 4; opacity: .65; }
+.cooling-chart .plot-grid { stroke: #2d3b43; stroke-width: 1; }
+.cooling-chart-legend { display: flex; gap: 8px 14px; flex-wrap: wrap; padding: 0 14px 13px; color: var(--muted); font-size: 10px; }
+.cooling-chart-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.cooling-chart-legend i { display: inline-block; width: 18px; height: 2px; background: currentColor; }
+.cooling-chart-legend .hot { color: #f0ab73; }
+.cooling-chart-legend .cold { color: #bca2e9; }
+.cooling-chart-legend .fluid { color: #70d0df; }
+.cooling-chart-legend .limit { color: #f1a193; }
+.cooling-chart-legend .limit i { background: repeating-linear-gradient(to right,currentColor 0 5px,transparent 5px 8px); }
+.cooling-station-controls { display: flex; align-items: center; gap: 10px; margin: 17px 0 12px; }
+.cooling-station-controls label { flex: 1; min-width: 0; color: var(--muted); font-size: 10px; }
+.cooling-station-controls label > span { display: block; margin-bottom: 6px; }
+.cooling-station-controls select { font-size: 11px; padding: 8px; }
+.cooling-station-detail { border: 1px solid #3d4d55; border-radius: 5px; background: #1a252b; padding: 15px; }
+.cooling-station-detail > .section-label { color: #b0c9d5; margin: 0 0 11px; }
+.cooling-station-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.cooling-station-grid > div { min-width: 0; }
+.cooling-station-grid span { display: block; font-size: 10px; line-height: 1.4; color: var(--muted); }
+.cooling-station-grid strong { display: block; margin-top: 4px; font-family: var(--mono); font-size: 12px; font-weight: 450; }
+.cooling-table-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cooling-table-toolbar summary { flex: 1; }
+.cooling-table { font-size: 10px; white-space: nowrap; min-width: 800px !important; }
+.cooling-table td { font-family: var(--mono); }
+.cooling-table tr.selected td { background: #26363e; color: #e1ecef; }
+.cooling-table button { font-family: var(--mono); background: transparent; border-color: transparent; font-size: 10px; padding: 4px 6px; color: var(--cyan); }
+.cooling-caption { margin: 10px 0 0; font-size: 10px; line-height: 1.6; color: var(--quiet); }
+.cooling-model-switch { padding: 14px; border: 1px solid #3e525e; border-radius: 5px; background: #18232a; margin-bottom: 20px; }
+.cooling-model-switch .field { margin: 0; }
+.cooling-inherited { border-left: 2px solid #467b8b; padding: 0 0 0 12px; color: var(--muted); font-size: 11px; line-height: 1.6; margin: 16px 0; }
+.cooling-inherited strong { color: #b8d9e3; font-weight: 500; }
+.dialog:has(.cooling-results) { width: min(780px, calc(100vw - 32px)); }
+@media (max-width: 899px) {
+  .cooling-heading { flex-wrap: wrap; gap: 10px; }
+  .cooling-heading h2 { font-size: 21px; }
+  .cooling-metric { padding: 14px; }
+  .cooling-metric > span { font-size: 11px; }
+  .cooling-metric strong { font-size: 23px; }
+  .cooling-chart-toolbar { flex-wrap: wrap; padding: 8px; }
+  .cooling-chart-toolbar > span { padding: 3px 5px; }
+  .cooling-chart-options { width: 100%; }
+  .cooling-chart-options button { flex: 1; min-height: 44px; padding: 8px 4px; font-size: 11px; }
+  .cooling-chart { aspect-ratio: 560 / 330; }
+  .cooling-chart .axis-tick { font-size: 14px; }
+  .cooling-chart .axis-label { font-size: 14px; }
+  .cooling-chart .throat-label { font-size: 13px; }
+  .cooling-chart-legend { gap: 8px 12px; font-size: 10px; padding: 0 12px 14px; }
+  .cooling-station-controls label { font-size: 12px; }
+  .cooling-station-controls select { min-height: 44px; font-size: 13px; }
+  .cooling-station-grid span { font-size: 11px; }
+  .cooling-station-grid strong { font-size: 13px; }
+  .cooling-caption, .cooling-inherited { font-size: 11px; }
+  .cooling-table button { min-height: 44px; }
+}

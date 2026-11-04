@@ -1,6 +1,6 @@
 # AstroForge Lite Modellumfang und Rechenkonventionen
 
-Stand: 4. November 2026. Diese Beschreibung gilt für `src/physics.js`. Lite ist ein stationäres Vorentwurfs- und Bilanzwerkzeug mit vorgegebenen Betriebspunktparametern. Ein erfolgreich berechnetes Ergebnis ist kein Nachweis für tatsächlich erreichbare Hardwareleistung.
+Stand: 4. November 2026. Diese Beschreibung gilt für Lite 2.2, `src/physics.js` und `src/cooling.js`. Lite ist ein stationäres Vorentwurfs- und Bilanzwerkzeug mit vorgegebenen Betriebspunktparametern. Ein erfolgreich berechnetes Ergebnis ist kein Nachweis für tatsächlich erreichbare Hardwareleistung.
 
 ## Einheiten und Ergebnisbezug
 
@@ -35,20 +35,20 @@ Verbrennungs-, Reibungs- und Divergenzverluste sind hier nicht enthalten. Bei Ü
 
 Hals-/Austritts-/Kammerradius folgen aus Flächenverhältnissen. Im Lite-Modell ist `L_chamber = Lstar / contractionRatio`; L* bezieht sich damit ausdrücklich auf das zylindrische Kammervolumen. Konvergentes Volumen wird diesem L*-Ansatz nicht zusätzlich zugerechnet.
 
-Die dargestellte Kontur besitzt glatte kubische Übergänge und eine Glockenlänge von 80 % einer geometrischen 15°-Kegelreferenz. Das ist eine **Visualisierungsnäherung**, keine Rao-/MoC-Konstruktion und keine Fertigungskontur. Aus der Darstellung werden keine Wärme- oder Festigkeitsnachweise abgeleitet.
+Die dargestellte Kontur besitzt glatte kubische Übergänge und eine Glockenlänge von 80 % einer geometrischen 15°-Kegelreferenz. Das ist eine **Visualisierungsnäherung**, keine Rao-/MoC-Konstruktion und keine Fertigungskontur. Das Kanalmodell verwendet genau diese diskretisierte Kontur für thermisches Screening. Daraus folgt weder eine validierte Düsenkontur noch ein Festigkeitsnachweis. Der eingegebene Halskrümmungsfaktor ist eine Bartz-Modellannahme; er rekonstruiert die kubische Kontur nicht.
 
 ## Versorgungspfade
 
-Genau ein Brennstoffpfad und ein Oxidatorpfad führen ohne Verzweigung zum Injektor. Leitungen, Ventile, Messstellen, Pumpen und ein oder mehrere Brennstoff-Wärmebilanzblöcke können in Reihe angeordnet werden. Sections ändern die physische Bilanz nicht.
+Genau ein Brennstoffpfad und ein Oxidatorpfad führen ohne Verzweigung zum Injektor. Leitungen, Ventile, Messstellen, Pumpen und höchstens ein geometriegekoppelter Brennstoff-Kühlmantel sowie ältere Wärmebilanzblöcke können in Reihe angeordnet werden. Sections ändern die physische Bilanz nicht.
 
-Konstante Screeningwerte:
+Ohne Kanalmodell gelten konstante Screeningwerte:
 
 | Medium | Dichte | Dynamische Viskosität | Zulässige Eingangs-Temperatur |
 |---|---|---|---|
 | RP-1 | 810 kg/m³ | 0.0018 Pa·s | 288–303 K |
 | LOX | 1140 kg/m³ | 0.0002 Pa·s | 85–95 K |
 
-Dies sind ausdrücklich konstante Annahmen, keine aktuelle Stoffdatenbankabfrage und keine temperaturabhängigen RP-1-Surrogatdaten. Nach Erwärmung im Wärmebilanzblock bleiben Dichte und Viskosität unverändert. Eine Phasenänderung, chemische Zersetzung oder lokale Kavitation wird nicht berechnet.
+Dies sind ausdrücklich konstante Annahmen, keine aktuelle Stoffdatenbankabfrage und keine temperaturabhängigen RP-1-Surrogatdaten. Ohne Kanalmodell bleiben Dichte und Viskosität nach Erwärmung im alten Wärmebilanzblock unverändert. Sobald ein Kanalmodell vorhanden ist, verwendet der gesamte Brennstoffpfad die unten beschriebenen temperatur- und druckabhängigen n-Dodecan-Ersatzstoffwerte. LOX bleibt konstant. Eine Phasenänderung, chemische Zersetzung oder lokale Kavitation wird nicht berechnet.
 
 Leitungen verwenden Darcy–Weisbach mit `v = mdot/(rho*A)` und `Re = rho*v*D/mu`. Für `Re < 2300` gilt `f = 64/Re`; oberhalb 4000 wird die Haaland-Näherung verwendet. Dazwischen wird linear über Re interpoliert und eine Warnung ausgegeben. Der örtliche Verlust ist `K*rho*v²/2`. Ventile verwenden den Querschnitt der vorangehenden Leitung, bei fehlendem Vorgänger den der ersten Leitung im Pfad. Relative Rauheit ist auf höchstens 0.05 begrenzt; Geschwindigkeit über 100 m/s wird als außerhalb des Lite-Screenings abgewiesen.
 
@@ -85,9 +85,49 @@ torque_available = P_available / omega
 
 Motorleistung wird bereits **an der Welle** angegeben; der mechanische Wirkungsgrad wirkt auf die Turbinenleistung. Ein positiver Saldo bedeutet Leistungsreserve, keinen automatisch stationär geschlossenen Drehmomentzustand. Ein Defizit macht den vorgegebenen Zielbetriebspunkt nicht erfüllbar. Pumpenerwärmung, NPSH, Kavitation, Lager, Kennfelder und Rotordynamik fehlen.
 
-## Regenerativer Wärmebilanzblock
+## Geometriegekoppelte Kanalkühlung
 
-Dieser Block nimmt einen vorgegebenen Wärmestrom und Druckverlust auf:
+Neue Kühlmäntel verwenden `mode: channels`. Höchstens ein solcher Block ist je Projekt erlaubt. Der gesamte Hauptbrennstoffstrom fließt vom Düsenaustritt zurück zur Kammer. Kontur und Halsfläche stammen aus demselben Haupttriebwerksentwurf. Es gibt keine zusätzliche Kühlmassenstromvorgabe und keinen berechneten Bypass.
+
+### Stoffwerte und feste Gasrandbedingung
+
+`public/cooling-data.json` enthält getrennte Gastransport- und Kühlmitteldaten. Gastransport wird über pc und O/F bilinear interpoliert. Für Bartz und die lokale Strömungsnäherung werden **frozen-Kammer-cp, -Prandtlzahl und -gamma** verwendet; die Viskosität stammt ebenfalls aus CEA. `gamma = cp/(cp-R)` basiert auf der Kammer-Molmasse. Diese Werte bleiben entlang der Kontur konstant. Kammer-Tc, c* und pc sind feste CEA-/Entwurfsrandbedingungen. Der berechnete Wärmeentzug reduziert die Gasenthalpie nicht; die aufgeheizte Brennstoffenthalpie wird nicht in eine neue Verbrennungsrechnung zurückgeführt.
+
+Das Kühlmittel ist **CoolProp 8.0.0 / HEOS n-Dodecan**, ein einzelner RP-1-Ersatzstoff, kein qualifiziertes RP-1-Gemisch und kein offizieller NIST-/REFPROP-Export. Dichte, cp, Viskosität, Wärmeleitfähigkeit und spezifische Enthalpie werden über T und p bilinear interpoliert. Tabellenumfang: **288–633 K, 1–200 bar**. Nur Zellen mit gültigen flüssigen beziehungsweise dichten `supercritical_liquid`-Eckzuständen werden verwendet. Gas-/ungültige Zustände sind nullmarkiert und werden nicht überbrückt; Extrapolation ist gesperrt. Der rechteckige Zahlenbereich bedeutet deshalb nicht, dass jede T/p-Kombination zulässig ist. Quellen und Vergleichsstichproben stehen im Datensatz.
+
+### Geometrie, Wärme und Druck
+
+Der eingegebene Anteil der Umfangsteilung bestimmt die lokale Breite der rechteckigen Kanäle. Höhe, Wanddicke und Kanalanzahl sind konstant. Der Wärmeübergang berücksichtigt die effektiv benetzte Fläche einschließlich gerader Rippen mit `eta_fin = tanh(mh)/(mh)`.
+
+Die lokale Machzahl folgt aus dem Flächen-Mach-Verhältnis mit konstantem frozen-gamma, unter- beziehungsweise überschallschnell vor beziehungsweise nach dem Hals. Die Gas-Recoverytemperatur verwendet den Faktor `Pr^(1/3)`. Der gasseitige Bartz-Ansatz enthält lokale Fläche, Halskrümmung und eine iterativ bestimmte Wandtemperaturkorrektur. Das Wandmodell nutzt ebene radiale Wärmeleitung mit konstanter eingegebener Wärmeleitfähigkeit:
+
+```
+q = h_g * (T_recovery - T_wall_hot)
+q = (T_wall_hot - T_coolant) / (wall_thickness/k_wall + 1/(h_coolant*area_factor))
+T_wall_cold = T_wall_hot - q*wall_thickness/k_wall
+Q_segment = q * hot_surface_segment
+```
+
+Kühlmittelseitig werden Rechteckkanalkorrelationen für laminare Darcy-Reibung und Nusseltzahl sowie Haaland/Gnielinski für turbulente Strömung verwendet. Zwischen Re 2300 und 4000 wird interpoliert und gewarnt. Re über 5 Millionen oder Pr außerhalb 0,5–2000 erzeugt einen Korrelationshinweis; relative Rauheit über 0,05 wird abgewiesen.
+
+Das Modell marschiert entgegen der Gasrichtung. Pro Segment werden Zustand, Wandtemperatur, Wärmeaufnahme und Druck gekoppelt iteriert. Energie enthält Enthalpie **und kinetische Energie**:
+
+```
+Q_total = mdot * (h_out - h_in + (v_out² - v_in²)/2)
+p_static_out = p_static_in - friction_loss - acceleration_term
+```
+
+Darcy-Reibung und ein längenverteilter örtlicher Verlust K tragen zum Druckverlust bei. Die variable Kanalfläche kann örtliche statische Druckrückgewinnung erzeugen. Gesamt-Eintrittsdruck wird iterativ in statischen Druck umgerechnet; am Austritt wird der dynamische Anteil wieder addiert. **Stationsprofil und Kanaltabelle zeigen statischen Kühlmitteldruck.** Blockeintritt, -austritt und Δp in der Feed-Bilanz sind Gesamtdruckbudgets am Zielbetriebspunkt.
+
+Die vorgegebene Zahl axialer Segmente wird um alle ursprünglichen Konturstützstellen ergänzt; deshalb kann die ausgegebene Stationszahl größer sein. Das Profil enthält Segmentmitten und zusätzliche Randzustände einschließlich des Düsenaustritts, damit Wandtemperaturspitzen an den Rändern erfasst werden. Randzustände tragen keinen zusätzlichen Segmentwärmestrom bei. Alle Stationen sind in Gasströmungsrichtung sortiert. Segmentiteration: höchstens 100 Schritte, Toleranzen 1e-6 K und 1e-7 bar; Wandtemperatur-Bisektion: 60 Schritte. Das äußere Brennstoff-Druckbudget iteriert höchstens 60-mal mit 50-%-Dämpfung und 1e-5 bar Toleranz. Verletzte Stoffdatengrenzen oder fehlende Konvergenz liefern kein gültiges Ergebnis.
+
+`wallMarginK = eingegebene Wandgrenze - maximale heiße Wandtemperatur`. Eine negative Marge ergibt einen Warnstatus bei weiterhin auswertbarem Rechenergebnis. Sie bezeichnet ausschließlich einen Vergleich mit der **vom Nutzer gesetzten Temperaturgrenze**, keine geprüfte Werkstoffzulässigkeit.
+
+Nicht enthalten sind Strahlung, axiale Wandleitung, Siedung/Zweiphasigkeit, Verkokung/Pyrolyse, thermische Spannungen, Ermüdung oder Lebensdauer. Auch bei eingehaltenem Temperaturlimit bleiben diese offenen Nachweise bestehen. Die Gasrandbedingung, Chemie und Hauptmassenströme werden durch die Kühlrechnung nicht neu gelöst.
+
+## Älterer regenerativer Wärmebilanzblock
+
+Importierte Projekte ohne Kanalmodus behalten ihre Parameter. Die explizite Umstellung im Inspector ersetzt sie durch Kanalparameter und ist rückgängig machbar. Der ältere Block nimmt einen vorgegebenen Wärmestrom und Druckverlust auf:
 
 ```
 T_out = T_in + Q / (mdot * cp)
@@ -147,7 +187,12 @@ Diese Grenzen definieren den Software-/Screeningumfang, keine Hardwarezulassung.
 | Absolute Rauheit | 0 bis min(1 mm, D/20) |
 | Örtlicher Verlust K / Injektorverlust je Seite | 0–10000 / 0–100 bar |
 | Pumpendruckanstieg / Wirkungsgrad | 0.01–150 bar / 0.05–1 |
-| Kühlblock Q / Druckverlust / cp | 0–5000 kW / 0–100 bar / 100–10000 J/(kg K) |
+| Älterer Kühlblock Q / Druckverlust / cp | 0–5000 kW / 0–100 bar / 100–10000 J/(kg K) |
+| Kanalanzahl / Höhe / Teilungsanteil | 12–500 ganzzahlig / 0.2–10 mm / 0.1–0.9 |
+| Kanalwanddicke / Wärmeleitfähigkeit | 0.2–5 mm / 5–500 W/(m K) |
+| Kanalrauheit / örtlicher Verlust K | 0–0.1 mm / 0–50; zusätzlich Rauheit/Dh ≤ 0.05 |
+| Eingegebene Wandgrenze / axiale Segmentvorgabe | 400–2000 K / 40–400 ganzzahlig |
+| Halskrümmungsradius / Halsradius | 0.2–5 |
 | Wellendrehzahl / Wirkungsgrad / Motorleistung | 100–200000 rpm / 0.05–1 / 0–10000 kW |
 | Treibgas p / T / Massenstrom | 0.1–200 bar / 200–2000 K / 0.001–10 kg/s |
 | Treibgas cp / gamma | 500–10000 J/(kg K) / 1.05–1.67 |
@@ -158,7 +203,7 @@ Zusätzlich muss `p_gas_source > p_turbine_out > p_exhaust_exit` gelten. Der Tur
 
 ## Verifikation und verbleibende Grenzen
 
-Die Tests prüfen Referenzwerte, Erhaltung der Massenströme, eine unabhängige laminare Druckverlustlösung, Pumpenarbeit, Turbinenenthalpie, Wellenzuordnung, Drehmoment, Wärmebilanz, Zusatzgasverbrauch und Druckschub. Ungültige Zustände werden gesondert getestet. Diese Prüfungen ersetzen keine experimentellen Nachweise.
+Die Tests prüfen Referenzwerte, Erhaltung der Massenströme, eine unabhängige laminare Druckverlustlösung, Pumpenarbeit, Turbinenenthalpie, Wellenzuordnung, Drehmoment, Wärmebilanz, Zusatzgasverbrauch und Druckschub. Ungültige Zustände werden gesondert getestet. Kanaltests ergänzen Wärme-/Druckbilanzen, Stoffdatengrenzen, thermische Sensitivitäten und Netzdiskretisierung; UI-/Migrationstests prüfen Darstellung und den Erhalt alter Projekte. Aktueller tatsächlicher Prüfstatus: `VALIDATION.md`. Diese Prüfungen ersetzen keine experimentellen Nachweise.
 
 Der Datengenerator prüft alle 252 Zellmittelpunkte gegen zusätzliche direkte CEA-Aufrufe. Größte relative Abweichungen dieser Stichprobe: c* 0.184 %, Cf 0.429 %, Tc 0.464 %, pe 0.650 %. Die Daten enthalten die genauer gespeicherten Werte und die verwendete Backend-Version. Das sind **Stichprobenabweichungen**, keine mathematisch garantierten globalen Fehlergrenzen.
 

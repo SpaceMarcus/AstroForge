@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {createTemplate} from '../src/state.js';
+import {createTemplate as newTemplate} from '../src/state.js';
+const createTemplate=id=>{const p=newTemplate(id);for(const n of p.nodes)if(n.type==='regen')n.params={heatKW:50,dropBar:3,cpJkgK:2200};return p;};
 import {solveProject} from '../src/physics.js';
 const thermo=JSON.parse(readFileSync(new URL('../public/thermo.json',import.meta.url)));
 const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-8,`${a} != ${b}`);

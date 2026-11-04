@@ -1,12 +1,12 @@
-# AstroForge 2.1 Lite
+# AstroForge 2.2 Lite
 
-Ein lokaler Arbeitsraum für den stationären LOX/RP-1-Triebwerksvorentwurf mit grafisch bearbeitbaren Komponenten. Version 2.1 ergänzt Pumpen, Antriebswellen, einen vereinfachten Kühlblock sowie einen separat vorgegebenen Treibgaszweig mit Turbine und Abgasdüse. Komponenten, Leistung und vorläufige Geometrie gehören zum selben Projekt.
+Ein lokaler Arbeitsraum für den stationären LOX/RP-1-Triebwerksvorentwurf mit grafisch bearbeitbaren Komponenten. Version 2.2 ergänzt eine geometriegekoppelte Kanalkühlung mit Temperaturprofilen, Wärmestromdichte und Druckverlust. Pumpen, Antriebswellen sowie ein separat vorgegebener Treibgaszweig mit Turbine und Abgasdüse bleiben Teil des Arbeitsraums. Komponenten, Leistung und vorläufige Geometrie gehören zum selben Projekt.
 
-Der aktuelle Stand wird im GitHub-Repository geführt. Quellcode und Versionsnachweise dieses Branches sind maßgeblich. Die früher veröffentlichte private 2.0-Site wurde **nicht auf 2.1 aktualisiert** und ist kein Zugang zum aktuellen Cycle-Umfang.
+Der aktuelle Stand wird im GitHub-Repository geführt. Quellcode und Versionsnachweise dieses Branches sind maßgeblich. Die früher veröffentlichte private 2.0-Site wurde **nicht auf 2.2 aktualisiert** und ist kein Zugang zum aktuellen Cycle-Umfang.
 
 ## Starten
 
-**Windows-Paket:** Sofern ein zum aktuellen Branch gehörendes 2.1-Paket vorliegt, die enthaltene AstroForge-Lite-EXE öffnen. Der Starter bringt seine Laufzeit und Web-Dateien mit und öffnet den Standardbrowser. Die feste lokale Adresse ist `http://127.0.0.1:4174/`; bei belegtem Port wird eine alternative Adresse angezeigt, deren Autosave getrennt ist. Dieser Server ist nur auf dem Windows-Rechner erreichbar. Ein älteres 2.0-Paket erhält die neuen Funktionen nicht automatisch. Paket- und Prüfnachweise stehen in `VALIDATION.md`.
+**Windows-Paket:** Sofern ein zum aktuellen Branch gehörendes 2.2-Paket vorliegt, die enthaltene AstroForge-Lite-EXE öffnen. Der Starter bringt seine Laufzeit und Web-Dateien mit und öffnet den Standardbrowser. Die feste lokale Adresse ist `http://127.0.0.1:4174/`; bei belegtem Port wird eine alternative Adresse angezeigt, deren Autosave getrennt ist. Dieser Server ist nur auf dem Windows-Rechner erreichbar. Ein älteres 2.0-Paket erhält die neuen Funktionen nicht automatisch. Paket- und Prüfnachweise stehen in `VALIDATION.md`.
 
 **Windows aus dem Quellprojekt:** Node.js installieren, anschließend `Start-AstroForge.cmd` öffnen. Das Skript erstellt die Browserdateien, startet den lokalen Server und öffnet [AstroForge Lite](http://localhost:4173). Das Serverfenster während der Nutzung geöffnet lassen. Ein zusätzliches Paket-Installieren ist nicht erforderlich.
 
@@ -26,7 +26,7 @@ Android verwendet die responsive Browseroberfläche, keine native APK. Installat
 
 ## Der erste Entwurf
 
-1. Über **Vorlage** eine der drei Architekturen wählen. Alle starten mit 10 kN idealem Hauptschub, 30 bar Kammerdruck und O/F 2,6.
+1. Über **Vorlage** eine der drei Architekturen wählen. Alle starten mit 10 kN idealem Hauptschub und 30 bar Kammerdruck. Die Kühlungs-Vorlagen verwenden O/F 2,0, L* 0,5 m und 0,75 mm Kanalhöhe; neue einzeln hinzugefügte Kühlmäntel starten mit 2 mm Höhe.
 2. Unter **Triebwerksentwurf** die Ziele bearbeiten. Auf dem Handy zwischen **Bauteile**, **System**, **Details** und **Ergebnisse** wechseln.
 3. Komponenten anklicken und ihre Parameter im Inspector ändern. Zum Verschieben am Bauteil ziehen; zum Verbinden zuerst einen Ausgangsport, dann einen Eingangsport anklicken.
 4. Die Oxidator- oder Brennstoff-Section öffnen, um deren Teile näher zu bearbeiten. Der Brotkrumenpfad führt zurück zum Gesamtsystem.
@@ -40,8 +40,8 @@ Eine neue Fluidkomponente wird zunächst unverbunden angelegt. Im Inspector unte
 | Vorlage | Enthaltene Modelle |
 |---|---|
 | AF–01 / Pressure-fed | Zwei druckgeförderte Versorgungspfade mit Injektor, Kammer und Glockendüse |
-| AF–02 / Electric + Regen | Zwei Pumpen, gemeinsamer externer Wellenantrieb und ein Kühlblock mit vorgegebener Wärmeaufnahme |
-| AF–03 / Turbine drive | Pumpen, Welle, Kühlblock sowie separate Treibgasquelle, Turbine und Abgasdüse |
+| AF–02 / Electric + Regen | Zwei Pumpen, gemeinsamer externer Wellenantrieb und ein geometriegekoppelter Kühlmantel |
+| AF–03 / Turbine drive | Pumpen, Welle, Kühlmantel sowie separate Treibgasquelle, Turbine und Abgasdüse |
 
 Die dritte Vorlage ist kein vollständig geschlossener Gasgeneratorzyklus: Der Treibgaszustand und sein zusätzlicher Massenstrom werden separat vorgegeben. Das System-Isp berücksichtigt diesen zusätzlichen Verbrauch.
 
@@ -50,7 +50,8 @@ Die dritte Vorlage ist kein vollständig geschlossener Gasgeneratorzyklus: Der T
 - Zwei getrennte, unverzweigte Versorgungspfade bis zum Injektor; anschließend eine Kammer und eine Düse.
 - Versorgung, Leitung, einfaches Ventil und ideale Messstelle; definierte Verlustannahmen am Injektor.
 - Pumpen mit vorgegebener Druckerhöhung und Wellenzuordnung; Antrieb mit Leistung, Wirkungsgrad und Drehzahl.
-- Kühlblock mit vorgegebener Wärmeaufnahme, Druckverlust und Wärmekapazität.
+- Ein regenerativer Kühlmantel mit rechteckigen Kanälen entlang der Kammer-/Düsenkontur; berechnete Wärmeaufnahme, Wandtemperaturen und Druckverlust.
+- Temperatur-, Wärmestrom- und statisches Kühlmitteldruckprofil mit Stationsauswahl und eigenem CSV-Export. Ältere Wärmebilanzblöcke bleiben beim Import erhalten.
 - Ein separater, unverzweigter Treibgaszweig von einer Gasquelle über eine Turbine zu einer Abgasdüse.
 - Zwei vorgegebene Sections: Oxidator und Brennstoff. Keine beliebig verschachtelte Subsystembibliothek.
 - Lokales Autosave, Projektdateien, Undo/Redo sowie CSV- und JSON-Ergebnisexport.
@@ -67,17 +68,27 @@ Die Hauptkennwerte bleiben die idealen Werte des Haupttriebwerks. Bei vorhandene
 | Thermochemie | Interpolation von 392 vorab mit RocketCEA 1.2.3 erzeugten Zuständen; kein laufender CEA-Solver im Browser |
 | CEA-Einlasszustände | Feste Reaktantentemperaturen der Stoffkarten: RP-1 298,15 K, LOX 90,18 K |
 | Datenbereich | Kammerdruck 10–80 bar, O/F 2,0–3,2, Expansion 4–40 |
-| RP-1-Versorgung | Konstante Screeningwerte: Dichte 810 kg/m³, dynamische Viskosität 0,0018 Pa·s; Temperatur 288–303 K |
+| RP-1-Versorgung ohne Kanalmodell | Konstante Screeningwerte: Dichte 810 kg/m³, dynamische Viskosität 0,0018 Pa·s; Temperatur 288–303 K |
 | LOX-Versorgung | Konstante Screeningwerte: Dichte 1.140 kg/m³, dynamische Viskosität 0,0002 Pa·s; Temperatur 85–95 K |
-| Versorgungstemperatur | Ohne Kühlblock isotherme Annahme; ein Kühlblock erhöht die Temperatur aus vorgegebener Wärmeaufnahme und konstantem cp. Keine Kopplung an die CEA-Thermochemie |
+| Versorgungstemperatur | Außerhalb der Kühlung isotherm; Wärmeaufnahme im Kühlmantel verändert den Brennstoffzustand, jedoch nicht die CEA-Verbrennungschemie |
 | Pumpe | Inkompressible Druckarbeit mit vorgegebener Druckerhöhung und Wirkungsgrad; keine Kennlinie oder Kavitation |
 | Welle | Pumpenbedarf gegen Turbinenleistung nach mechanischem Wirkungsgrad plus externe, bereits an der Welle verfügbare Leistung; Drehmoment aus vorgegebener Drehzahl |
-| Kühlblock | Vorgegebener Wärmestrom, Druckverlust und cp; keine Kanal- oder Wandtemperaturauslegung, keine temperaturabhängigen Stoffwerte |
+| Kanalkühlung | Stationäres 1D-Gegenstrommodell, Bartz-Gasseite mit eingefrorenen CEA-Kammertransportwerten, Wandwärmeleitung und Kanalströmung mit Rippenwirkung |
+| Brennstoff mit Kanalmodell | Temperatur-/druckabhängiges n-Dodecan als RP-1-Ersatzstoff im gesamten Brennstoffpfad; CoolProp-Tabelle 288–633 K / 1–200 bar, ausschließlich gültige einphasige Tabellenzellen |
+| Älterer Kühlblock | Vorgegebener Wärmestrom, Druckverlust und cp bleiben erhalten; explizite Umstellung im Inspector aktiviert Kanalparameter |
 | Turbine | Idealgas-Expansion bei konstantem cp und γ sowie vorgegebenen Ein-/Austrittsdrücken und Wirkungsgrad |
 | Abgasdüse | Zusätzlicher Impuls- und Druckschub aus dem separaten Treibgasstrom; keine optimierte Kontur oder Ablösung |
 | Geometrie | Vorläufige Kammer-/Düsenkontur mit glatter kubischer Glockenapproximation; keine validierte Rao-Auslegung |
 
-Lite enthält keinen allgemeinen Netzsolver, keinen vollständigen Gasgenerator-/Expander-/Staged-Combustion-Abschluss, keine Transienten, reale Off-design-Lösung, Detailkühlung, Struktur- oder Lebensdauernachweise. Die Ergebnisse dienen dem Vorentwurf und sind keine Zertifizierung oder Freigabe zur Fertigung beziehungsweise Erprobung.
+Lite enthält keinen allgemeinen Netzsolver, keinen vollständigen Gasgenerator-/Expander-/Staged-Combustion-Abschluss, keine Transienten, reale Off-design-Lösung, Strahlung, axiale Wandleitung, Siedung, Verkokung, Struktur- oder Lebensdauernachweise. Der angezeigte Abstand zur Wandgrenze vergleicht die Modelltemperatur mit einer vom Nutzer eingegebenen Grenze; er ist keine geprüfte Werkstoffzulässigkeit. n-Dodecan ist kein qualifiziertes RP-1-Gemischmodell. Die Ergebnisse dienen dem Vorentwurf und sind keine Zertifizierung oder Freigabe zur Fertigung beziehungsweise Erprobung.
+
+## Kühlkanäle bearbeiten
+
+In **Pumpen & Kühlung** den Kühlmantel auswählen. Kanalanzahl, -höhe, Umfangsteilungsanteil, Wanddicke, Wärmeleitfähigkeit und Rauheit bearbeiten. Kanalbreite und Länge folgen der bestehenden Kammer-/Düsenkontur; der Massenstrom kommt aus dem Brennstoffpfad. Wärmeaufnahme und Druckverlust werden im Kanalmodus berechnet, nicht eingegeben.
+
+Nach **Berechnen** über **Temperaturprofil & Kanalwerte** die heiße und kalte Wand sowie das Kühlmittel entlang der Achse betrachten. Zwischen Temperatur, Wärmestromdichte und statischem Kühlmitteldruck wechseln. Eine Station auswählen und bei Bedarf die Kanaldaten als CSV exportieren. Die Kurven laufen in Gasströmungsrichtung; das Kühlmittel strömt vom Düsenaustritt zurück zur Kammer. Eine Überschreitung der eingegebenen Wandgrenze bleibt als Warnstatus sichtbar. Außerhalb der Stoffdaten oder bei fehlender Konvergenz gibt es kein gültiges Ergebnis.
+
+Alte Projekte behalten ihren aufgeprägten Wärmebilanzblock. **Auf Kühlkanäle umstellen** ersetzt dessen Parameter ausdrücklich; die Änderung ist rückgängig machbar. Es ist höchstens ein Kanalmodell je Projekt erlaubt.
 
 ## Speicherung und Offline-Nutzung
 
@@ -85,7 +96,7 @@ Autosave bleibt im Browserspeicher dieses Geräts. Browserdaten löschen oder ei
 
 Die Anwendung enthält ein Manifest und einen Service Worker. Nach einem vollständigen Laden in einem unterstützten sicheren Kontext können Anwendungsdateien zwischengespeichert werden. Browserinstallation und Offlineverhalten hängen vom Zugriffsweg ab. Der Android-LAN-Zugriff über HTTP benötigt weiterhin den laufenden Server. Den tatsächlich verwendeten Vorführweg daher vor Ort prüfen.
 
-Der bisherige 2.0-Stand wurde auf Desktop und in mobiler Browseremulation sowie lokal offline geprüft. Diese Nachweise sind nicht automatisch eine Abnahme aller neuen 2.1-Cycle-Funktionen. Ein physisches Android-Handy wurde bisher nicht getestet. Aktuelle Prüfstände stehen in `VALIDATION.md`; der [Vorführablauf](DEMO.md) erklärt die neuen Komponentenmodelle.
+Der bisherige 2.0-Stand wurde auf Desktop und in mobiler Browseremulation sowie lokal offline geprüft. Diese Nachweise sind nicht automatisch eine Abnahme aller neuen 2.2-Cycle-Funktionen. Ein physisches Android-Handy wurde bisher nicht getestet. Aktuelle Prüfstände stehen in `VALIDATION.md`; der [Vorführablauf](DEMO.md) erklärt die neuen Komponentenmodelle.
 
 ## Prüfnachweise
 

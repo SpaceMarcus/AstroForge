@@ -194,6 +194,16 @@ export class GraphEditor {
       if (!shaftVisible || !componentVisible) link.append(svg('text', { x: !shaftVisible ? b.x : a.x, y: (!shaftVisible ? b.y : a.y) + 18, 'text-anchor': 'middle', fill: COLORS.mechanical, 'font-size': 9 }, (!shaftVisible ? shaft.label : component.label).slice(0, 22)));
       this.scene.append(link);
     }
+    const chamber=this.project.nodes.find(n=>n.type==='chamber');
+    if(chamber)for(const cooling of this.project.nodes.filter(n=>n.type==='regen'&&n.params?.mode==='channels')){
+      if(!ids.has(cooling.id))continue;
+      const c=this.position(cooling),h=this.position(chamber),a={x:c.x+WIDTH/2,y:c.y+HEIGHT},b=ids.has(chamber.id)?{x:h.x+WIDTH/2,y:h.y+HEIGHT}:{x:c.x+WIDTH/2+90,y:c.y+HEIGHT+76};
+      const y=Math.max(a.y,b.y)+60;
+      const link=svg('g',{'class':'graph-thermal-link',role:'img','aria-label':`Thermische Kopplung: ${cooling.label} mit Brennkammer und Hauptdüse`,'pointer-events':'none'});
+      link.append(svg('path',{d:`M ${a.x} ${a.y} C ${a.x} ${y}, ${b.x} ${y}, ${b.x} ${b.y}`,fill:'none',stroke:'#e68c69','stroke-width':1.5,'stroke-dasharray':'2 5'}));
+      link.append(svg('text',{x:(a.x+b.x)/2,y:y-9,fill:'#e68c69','font-size':9,'text-anchor':'middle'},'WÄRME · KAMMER + DÜSE'));
+      this.scene.append(link);
+    }
     for (const edge of this.project.edges) {
       const from = nodeMap.get(edge.from), to = nodeMap.get(edge.to);
       if (!from || !to) continue;
@@ -234,7 +244,7 @@ export class GraphEditor {
   renderNode(node) {
     const pos = this.position(node), color = COLORS[node.medium] || COLORS.gas;
     const selected = this.options.selectedId === node.id;
-    const hasError = this.options.result?.errors?.some(e => e.nodeId === node.id);
+    const hasError = this.options.result?.errors?.some(e => e.nodeId === node.id)||(!this.options.stale&&this.options.result?.cycle?.cooling?.some(c=>c.nodeId===node.id&&c.feasible===false));
     const group = svg('g', { transform: `translate(${pos.x} ${pos.y})`, class: 'graph-node', 'data-node': node.id, tabindex: 0, role: 'button', 'aria-label': `${node.label}, ${TYPE_NAMES[node.type] || node.type}. Enter zum Auswählen, Pfeiltasten zum Verschieben.`, 'aria-pressed': selected });
     group.append(svg('rect', { x: 0, y: 0, width: WIDTH, height: HEIGHT, rx: 8, fill: selected ? '#25343b' : '#19242b', stroke: hasError ? '#ec8e8e' : selected ? color : '#3a4a54', 'stroke-width': selected ? 2 : 1, class: 'graph-node-body' }));
     group.append(svg('rect', { x: 0, y: 24, width: 2, height: 34, rx: 1, fill: color }));
@@ -263,6 +273,8 @@ export class GraphEditor {
     return port;
   }
   nodeDetail(node) {
+    const thermal=this.options.result?.ok&&this.options.result?.cycle?.cooling?.find(c=>c.nodeId===node.id&&c.mode==='channels');
+    if(thermal&&!this.options.stale)return `Tw max ${formatNumber(thermal.maxHotWallTemperatureK,0)} K`;
     const station = this.options.result?.stations?.[node.id];
     if (station && !this.options.stale) return `${node.medium === 'gas' ? 'p_mod' : 'p_req'} ${formatNumber(station.pressureBar)} bar`;
     const p = node.params || {};
@@ -274,7 +286,7 @@ export class GraphEditor {
     if (node.type === 'injector') return 'LOX + RP-1';
     if (node.type === 'sensor') return ({ pressure: 'Druckmessstelle', temperature: 'Temperaturmessstelle', massflow: 'Massenstrommessstelle' })[p.quantity] || 'Virtuelle Messstelle';
     if (node.type === 'pump') return `Δp +${formatNumber(p.riseBar)} bar`;
-    if (node.type === 'regen') return `Q ${formatNumber(p.heatKW)} kW`;
+    if (node.type === 'regen') return p.mode==='channels'?`${formatNumber(p.channelCount,0)} Kanäle · ${formatNumber(p.channelHeightMm)} mm`:`Q ${formatNumber(p.heatKW)} kW`;
     if (node.type === 'shaft') return `${formatNumber(p.rpm, 0)} min⁻¹`;
     if (node.type === 'turbine') return `p_out ${formatNumber(p.outletBar)} bar`;
     if (node.type === 'exhaust') return `p_exit ${formatNumber(p.exitBar)} bar`;

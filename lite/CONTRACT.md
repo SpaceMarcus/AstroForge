@@ -1,5 +1,11 @@
 # Shared implementation contract
 
+## Channel cooling (2.2; supersedes cooling restrictions below)
+
+`solveProject(project, thermoData, coolingData)` accepts separately bundled real CEA transport and CoolProp n-dodecane surrogate data. `regen.params.mode==='channels'` uses shared fields/defaults in cooling-config.js; absent mode or `lumped` retains legacy heat/drop input behavior. Never silently migrate imported geometry. At most one channel jacket covers the main chamber and nozzle contour in counterflow. The gas boundary uses fixed CEA conditions and frozen transport; no reactant enthalpy/chemistry feedback is implied.
+
+The fuel path iterates required total pressures with the channel march. Channel profiles expose static coolant pressure and distinguish cell/boundary samples; boundary heat and pressure increments are zero to avoid double integration. `cycle.cooling` includes wall extrema, limit margin, calculated heat/drop, energy residual and axial stations. Exceeding a user wall limit sets `feasible:false`, not a numerical error. Invalid data/phase/geometry or nonconvergence rejects the result. See MODELS.md for correlations, units and limitations.
+
 ## Cycle extension (2.1; supersedes type restrictions below)
 
 Project files remain version 1 and old pressure-fed projects remain supported. Added node types: pump, regen, shaft, gasSource, turbine, exhaust. Mechanical shafts have medium `mechanical`, no fluid edges, and are referenced by pump/turbine `params.shaftId`. Pump and regen may occur in feed sections; regen is fuel-only. The optional auxiliary gas circuit is exactly gasSource → turbine → exhaust, supplied independently of the main LOX/RP-1 feeds. It is not a mass-balanced gas-generator cycle. Main chamber performance remains in `performance`; auxiliary and combined system quantities are in `cycle.auxiliary`. Pump, thermal, turbine and shaft balances are in `cycle` arrays. Parameter bounds and results are defined in physics.js and mirrored by cycle-ui.js.

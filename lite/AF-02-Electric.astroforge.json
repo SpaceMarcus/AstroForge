@@ -5,10 +5,10 @@
   "design": {
     "thrustN": 10000,
     "pcBar": 30,
-    "of": 2.6,
+    "of": 2,
     "eps": 12,
     "paBar": 1.01325,
-    "lstarM": 1.1,
+    "lstarM": 0.5,
     "contractionRatio": 3
   },
   "nodes": [
@@ -21,7 +21,7 @@
       "x": 40,
       "y": 90,
       "params": {
-        "pressureBar": 15,
+        "pressureBar": 20,
         "temperatureK": 90
       }
     },
@@ -62,7 +62,7 @@
       "x": 40,
       "y": 350,
       "params": {
-        "pressureBar": 15,
+        "pressureBar": 20,
         "temperatureK": 293.15
       }
     },
@@ -172,15 +172,23 @@
     {
       "id": "regen",
       "type": "regen",
-      "label": "Kühlmantel · Wärmebilanz",
+      "label": "Kühlmantel · Kanäle",
       "medium": "fuel",
       "section": "fuel",
       "x": 930,
       "y": 350,
       "params": {
-        "heatKW": 50,
-        "dropBar": 3,
-        "cpJkgK": 2200
+        "mode": "channels",
+        "channelCount": 120,
+        "channelHeightMm": 0.75,
+        "channelWidthFraction": 0.65,
+        "wallThicknessMm": 1,
+        "wallConductivityWmK": 320,
+        "roughnessMm": 0.005,
+        "minorK": 1,
+        "wallLimitK": 900,
+        "stations": 120,
+        "throatCurvatureRatio": 1.5
       }
     }
   ],
@@ -241,5 +249,5 @@
       "to": "injector"
     }
   ],
-  "updatedAt": "2026-11-04T15:36:45.746Z"
+  "updatedAt": "2026-11-04T15:56:31.405Z"
 }

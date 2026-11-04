@@ -53,11 +53,11 @@ test('template editing cannot modify shared defaults, another template, or the l
   const changed = createTemplate('electric');
   changed.nodes.find(n => n.type === 'pump').params.riseBar = 99;
   changed.nodes.find(n => n.type === 'shaft').params.motorKW = 0;
-  changed.nodes.find(n => n.type === 'regen').params.heatKW = 999;
+  changed.nodes.find(n => n.type === 'regen').params.channelHeightMm = 9;
   const fresh = createTemplate('electric');
   assert.equal(fresh.nodes.find(n => n.type === 'pump').params.riseBar, defaults.pump.riseBar);
   assert.equal(fresh.nodes.find(n => n.type === 'shaft').params.motorKW, 30);
-  assert.equal(fresh.nodes.find(n => n.type === 'regen').params.heatKW, defaults.regen.heatKW);
+  assert.equal(fresh.nodes.find(n => n.type === 'regen').params.channelHeightMm, .75);
   assert.deepEqual(DEFAULT_PARAMS, defaults);
   const baseline = createProject();
   assert.equal(baseline.nodes.length, 9);
