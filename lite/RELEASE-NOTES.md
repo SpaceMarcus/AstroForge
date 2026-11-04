@@ -1,3 +1,11 @@
+## 2.6.0 — Analyse und getrennte Teilergebnisse
+
+- Eigene Analyse-Seite über die Navigation und die Ergebnisleiste, auch auf dem Handy.
+- Ideale Kennwerte, Geometrie, Feed-Budget, Wellenleistung, Kühlprofile, Modellgrenzen und Exporte an einem Ort.
+- Ein fehlendes Kühlmodell oder ein ungültiger Systemzweig verdeckt nicht länger eine gültige ideale Triebwerksauslegung. Das Ergebnis bleibt ausdrücklich unvollständig; die Systembilanz wird nicht als erfolgreich markiert.
+- Gemeinsamer Rechenweg für ideale Kennwerte in Voll- und Teilergebnissen. Kein Ersatzstoff-Fallback, keine Extrapolation oder Temperaturbegrenzung.
+- Methan-, Wasserstoff- und Propan-Kanalkühlung bleibt ohne passendes Modell nicht verfügbar. Ethanol kann seine begrenzte Stoffdatentabelle überschreiten. Betroffene Komponenten und Modellgrenzen werden in der Analyse verlinkt.
+
 ## 2.5.1 — Getrennte Stoffauswahl
 
 Treibstoff und Oxidator haben eigene Auswahlfelder. Nicht unterstützte Kombinationen sind ausgegraut. Auswahl, O/F-Startwerte und Versorgungstemperaturen verwenden weiterhin denselben geprüften Stoffkatalog.

@@ -1,5 +1,12 @@
 # AstroForge 2.0 Lite Prüfstand
 
+## Erweiterung 2.6 · Analyse und Teilergebnisse
+
+4. November 2026. **114 automatisierte Tests bestanden.** Neue Tests prüfen Methan/H2/Propan mit nicht unterstützter Kanalkühlung, fehlende Stoffdaten und ungültige Entwurfsparameter sowie die Identität der idealen Kennwerte zwischen Voll- und Teilergebnis. Teilergebnisse ändern weder das Projekt noch den Fehlerstatus und enthalten keine vorgetäuschte Feed-Bilanz.
+
+Browserprüfung: HTP90/Propan als vollständige Druckförder-Auslegung; Methan in der Pumpen-/Kühlvorlage als ausdrücklich unvollständiges Ergebnis mit Bauteillink; RP-1-Kühlnetz mit Druckprofil und Stationsauswahl. Navigation zur Analyse und zurück bei 390 × 844, Dokumentbreite 390 px ohne horizontalen Überlauf. Keine neuen Stoffdaten oder Validitätsbereiche eingeführt.
+
+
 ## Erweiterung 2.2 · Geometriegekoppelte Kanalkühlung
 
 4. November 2026. **82 automatisierte Tests bestanden**. Neue Abdeckung: SI-Bartz-Referenz, quadratischer Laminar-Kanal, Machzahl, Enthalpie-/kinetischer Energieabschluss, Stoffdaten- und Phasengrenzen, Kanalgeometrie, Kammerdruckabhängigkeit, Druckrekonstruktion für hohe Verluste, Wärmeübertragung in den nachgeschalteten Feed-Pfad, Zellrandtemperaturen, Netzverfeinerung, Legacy-Erhalt, Modellwechsel/Undo, Profilbedienung und sichere Ausgabe.

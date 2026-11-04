@@ -132,6 +132,27 @@ function geometryFor(design,area){
   return {throatRadiusM:rt,exitRadiusM:re,chamberRadiusM:rc,chamberLengthM:chamberLength,nozzleLengthM:nozzleLength,contour};
 }
 
+function idealEngine(design,thermo){
+ const cf=thermo.cfVac-design.paBar/design.pcBar*design.eps;
+ if(!(cf>0))throw Error('Kein positiver idealer Schubkoeffizient für diese Randbedingungen.');
+ const area=design.thrustN/(cf*design.pcBar*1e5),mdot=design.pcBar*1e5*area/thermo.cstarMS,fuel=mdot/(1+design.of),ox=mdot-fuel;
+ return {performance:{thrustN:design.thrustN,ispS:cf*thermo.cstarMS/G0,cstarMS:thermo.cstarMS,tcK:thermo.tcK,mdotKgS:mdot,fuelKgS:fuel,oxKgS:ox,cf},geometry:geometryFor(design,area)};
+}
+function selectedThermo(design,data){
+ const pair=getPair(design);if(pair.id==='lox-rp1')return data;
+ const grid=data?.catalog?.pairs?.[pair.id];
+ if(!grid||grid.pairId!==pair.id||!grid.fluids?.fuel||!grid.fluids?.ox)throw Error('Keine passenden Rechen- und Stoffdaten für '+pair.label+'.');
+ return {...grid,catalog:data.catalog};
+}
+function idealAnalysis(project,data){
+ const d=project?.design;if(!d)throw Error('Entwurf fehlt.');
+ const errors=[];
+ for(const [key,min,max] of [['thrustN',100,100000],['paBar',0,1.2],['lstarM',.2,3],['contractionRatio',1.5,8]])validateNumber(d[key],min,max,key,null,errors);
+ if(errors.length)throw Error(errors[0].message);
+ const grid=selectedThermo(d,data),thermo=thermoAt(d,grid),engine=idealEngine(d,thermo);
+ return {scope:'ideal-engine-only',...engine,meta:{propellantPair:getPair(d).id,label:getPair(d).label,source:grid.source,reactants:grid.reactants,sampledValidation:grid.validation},warnings:['Nur ideale Triebwerksauslegung aus Entwurfszielen und CEA. Feed, Kühlung, Verbraucher und Antrieb sind nicht bewertet; kein nachgewiesener Systembetriebspunkt.']};
+}
+
 function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,context=null,fluids=FLUIDS){
   const source=path[0],fluid=fluids[medium],stations={},drops=new Map(),temperatures=new Map(),dynamicPressures=new Map();
   let temperature=source.params.temperatureK;
@@ -291,13 +312,11 @@ function solveExpandedProject(project,data,coolingData,topology=project){
   validateNumber(graph.injector.params.oxDropBar,0,100,'Injektorverlust Oxidator [bar]',graph.injector,errors);
   validateExtended(graph,design,errors);
   if(errors.length)return {ok:false,errors,warnings};
-  const cf=thermo.cfVac-design.paBar/design.pcBar*design.eps;
-  if(cf<=0)return {ok:false,errors:[{message:'Kein positiver idealer Schubkoeffizient für diese Randbedingungen.'}],warnings};
-  const area=design.thrustN/(cf*design.pcBar*1e5),mdot=design.pcBar*1e5*area/thermo.cstarMS;
-  const fuel=mdot/(1+design.of),ox=mdot-fuel;
+  let engine;try{engine=idealEngine(design,thermo);}catch(e){return {ok:false,errors:[{message:e.message}],warnings};}
+  const {cf,mdotKgS:mdot,fuelKgS:fuel,oxKgS:ox}=engine.performance;
   const cycle={pumps:[],cooling:[],turbines:[],shafts:[]};
   let fuelResult;
-  const geometry=geometryFor(design,area),channels=graph.paths.fuel.some(n=>n.type==='regen'&&n.params.mode==='channels');
+  const geometry=engine.geometry,channels=graph.paths.fuel.some(n=>n.type==='regen'&&n.params.mode==='channels');
   try{
     if(channels){
       const pressures=Object.fromEntries(graph.paths.fuel.map(n=>[n.id,coolingData?.coolant?.axes?.pressureBar?.at(-1)??200]));let converged=false;
@@ -325,7 +344,7 @@ function solveExpandedProject(project,data,coolingData,topology=project){
   warnings.push('2D-Glockenkontur: glatte kubische Visualisierungsnäherung, keine Rao-/MoC-Auslegung. L* bezieht sich hier auf das zylindrische Kammervolumen.');
   if(design.paBar>thermo.peBar)warnings.push('Überexpandierte Düse: ideale anliegende Strömung angenommen; Ablösung wird in Lite nicht berechnet.');
   return {ok:true,errors,warnings,cycle,
-    performance:{thrustN:design.thrustN,ispS:cf*thermo.cstarMS/G0,cstarMS:thermo.cstarMS,tcK:thermo.tcK,mdotKgS:mdot,fuelKgS:fuel,oxKgS:ox,cf},
+    performance:engine.performance,
     geometry,feeds:{fuel:fuelResult.feed,ox:oxResult.feed},
     stations:{...fuelResult.stations,...oxResult.stations,...auxiliaryStations,[graph.injector.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:null,fuelDropBar:graph.injector.params.fuelDropBar,oxDropBar:graph.injector.params.oxDropBar},[graph.chamber.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:0},[graph.nozzle.id]:{pressureBar:thermo.peBar,temperatureK:null,massFlowKgS:mdot,dropBar:null}},
     meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,feedFluids:Object.fromEntries(Object.entries(fluids).map(([medium,fluid])=>[medium,{...fluid,source:fluid.source||'Legacy constant screening properties; see MODELS.md'}])),coolantSource:channels?coolingData?.coolant?.source:null,domain:`${getPair(design).label} · Gleichgewicht · pc ${data.axes.pcBar[0]}–${data.axes.pcBar.at(-1)} bar · O/F ${data.axes.of[0]}–${data.axes.of.at(-1)} · ε ${data.axes.eps[0]}–${data.axes.eps.at(-1)} · CEA-Interpolation ohne Extrapolation`,propellantPair:getPair(design).id,interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:channels?'Darcy–Weisbach / Haaland; fuel T/p table, constant oxidizer screening properties':'Darcy–Weisbach / Haaland, konstante Stoffwerte',coolingModel:channels?'1D selectable flow and coverage, frozen chamber transport/Bartz, fixed gas boundary':null,coolingSource:channels?coolingData.source:null,pressureBasis:channels?'feed: required total-pressure budget; cooling: static pressure march plus dynamic conversion, no elevation':'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation',formulaSources:[{model:'Pump power',url:'https://www.energy.gov/sites/default/files/2014/05/f16/pump.pdf'},{model:'Ideal-gas turbine work',url:'https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html'},{model:'Nozzle expansion',url:'https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html'},{model:'Thrust and specific impulse',url:'https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/'}]}};
@@ -333,18 +352,22 @@ function solveExpandedProject(project,data,coolingData,topology=project){
 
 
 export function solveProject(project,data,coolingData){
+ let result;
+ try{result=solveFullProject(project,data,coolingData);}catch(e){result={ok:false,errors:[{message:e.message}],warnings:[]};}
+ if(!result.ok){try{result.partial=idealAnalysis(project,data);}catch{/* Invalid engine inputs never produce a partial analysis. */}}
+ return result;
+}
+function solveFullProject(project,data,coolingData){
  try{
   const pair=getPair(project?.design);
   if(pair.id!=='lox-rp1'){
-   const selected=data?.catalog?.pairs?.[pair.id];
-   if(!selected||selected.pairId!==pair.id||!selected.fluids?.fuel||!selected.fluids?.ox)throw Error('Keine passenden Rechen- und Stoffdaten für '+pair.label+'.');
-   coolingData=data.catalog.cooling?.[pair.id];data={...selected,catalog:data.catalog};
+   const selected=selectedThermo(project.design,data);coolingData=data.catalog.cooling?.[pair.id];data=selected;
   }
   if(project?.nodes?.some(n=>n?.type==='regen'&&n.params?.mode==='channels')){
-   if(!pair.channelCooling)throw Error('Kühlkanalmodell für '+pair.label+' noch nicht verfügbar. Wärmebilanzmodell oder Entwurf ohne Kanalkühlung verwenden.');
+   if(!pair.channelCooling){const e=Error('Kühlkanalmodell für '+pair.label+' noch nicht verfügbar. Die ideale Triebwerksauslegung steht separat in der Analyse; Feed- und Kühlungsbilanz bleiben offen.');e.nodeId=project.nodes.find(n=>n.type==='regen'&&n.params?.mode==='channels')?.id;throw e;}
    if(!coolingData)throw Error('Passende Kühlstoffdaten fehlen für '+pair.label+'.');
   }
- }catch(e){return {ok:false,errors:[{message:e.message}],warnings:[]};}
+ }catch(e){return {ok:false,errors:[{nodeId:e.nodeId,message:e.message}],warnings:[]};}
 
  if(!Array.isArray(project?.nodes)||!Array.isArray(project?.edges))return solveExpandedProject(project,data,coolingData);
  if(project.nodes.filter(n=>n?.type==='regen'&&n.params?.mode==='channels').length>1||project.nodes.some(n=>['branch','restriction','consumer','coolantSource'].includes(n?.type)||n?.type==='manifold'&&project.edges.filter(e=>e?.from===n.id).length>1))return solveBranchedProject(project,data,coolingData);

@@ -634,3 +634,22 @@ input[aria-invalid="true"] { border-color: var(--red); background: #291e1d; }
 
 .main-stage[data-engine="true"] #canvas,.main-stage[data-engine="true"] .canvas-footer{display:none}
 .main-stage[data-engine="true"] .engine-section{max-height:none;flex:1;min-height:0}
+
+/* Dedicated analysis workspace; same results on desktop and handheld screens. */
+body[data-view="analysis"] .workspace{grid-template-columns:220px minmax(0,1fr)}
+body[data-view="analysis"] .inspector,body[data-view="analysis"] #results{display:none}
+.main-stage[data-analysis="true"]>.stage-toolbar,.main-stage[data-analysis="true"]>#canvas,.main-stage[data-analysis="true"]>.canvas-footer{display:none}
+.analysis-page{flex:1;min-height:0;overflow:auto;background:var(--bg)}
+.analysis-inner{max-width:1120px;margin:0 auto;padding:32px;min-width:0}
+.analysis-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-bottom:24px}
+.analysis-heading h1{font-size:34px;margin:8px 0}
+.analysis-actions{display:flex;gap:8px;flex-wrap:wrap}
+.analysis-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:6px;margin:20px 0 24px;overflow:hidden}
+.analysis-metric{padding:18px;border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);display:flex;flex-direction:column;gap:12px;min-width:0}
+.analysis-metric>span{font-size:11px;color:var(--muted)}
+.analysis-metric strong{font-family:var(--mono);font-size:23px;font-weight:500;white-space:nowrap}
+.analysis-metric small{font:12px var(--font);color:var(--muted)}
+.analysis-inner>.notice{margin-bottom:24px}.analysis-inner>details,.analysis-inner>.feed-result{margin:20px 0}
+.analysis-geometry svg{max-width:440px;width:100%;margin:20px auto}
+.analysis-empty{max-width:620px;padding:32px 0;color:var(--muted)}
+@media(max-width:899px){.analysis-inner{padding:20px 16px}.analysis-heading{flex-direction:column;gap:12px}.analysis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-metric{padding:14px}.analysis-metric strong{font-size:22px}.analysis-inner .table-scroll{max-width:100%;overflow:auto}}

@@ -40,3 +40,20 @@ test('ethanol channels use each pair gas table and close the energy balance',()=
  assert.equal(new Set(heats.map(v=>v.toFixed(2))).size,3);
  const p=compactFeedlines(createTemplate('electric'));changePropellantPair(p,'lox-ethanol');const broken=structuredClone(data);delete broken.catalog.cooling['lox-ethanol'];assert.equal(solveProject(p,broken,cooling).ok,false);
 });
+
+test('unsupported cooling retains a clearly separate ideal engine analysis without a system success',()=>{
+ for(const id of ['lox-methane','lox-hydrogen','lox-propane']){
+  const p=compactFeedlines(createTemplate('electric'));changePropellantPair(p,id);const before=JSON.stringify(p),r=solve(p);
+  assert.equal(r.ok,false);assert.equal(r.partial?.scope,'ideal-engine-only');assert.ok(r.partial.performance.ispS>0);assert.equal(r.partial.feeds,undefined);assert.equal(r.performance,undefined);assert.equal(JSON.stringify(p),before);
+  const full=solve(project(id));assert.equal(r.partial.meta.propellantPair,id);assert.ok(r.partial.geometry.throatRadiusM>0);
+ }
+});
+test('partial engine analysis never bypasses invalid engine inputs or missing pair data',()=>{
+ const p=project('lox-methane');p.design.of=99;assert.equal(solve(p).partial,undefined);
+ p.design.of=3.2;assert.equal(solveProject(p,legacy,cooling).partial,undefined);
+ p.design.thrustN=-1;assert.equal(solve(p).partial,undefined);
+});
+test('valid ideal analysis matches full performance and geometry when the network is invalid',()=>{
+ const p=project('htp90-propane'),full=solve(p);p.nodes.find(n=>n.type==='valve').params.open=false;
+ const r=solve(p);assert.equal(r.ok,false);assert.deepEqual(r.partial.performance,full.performance);assert.deepEqual(r.partial.geometry,full.geometry);
+});
