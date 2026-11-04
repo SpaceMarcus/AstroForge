@@ -1,3 +1,11 @@
+## 2.3.0 — Engine section and edge-based feedlines
+
+- Engine section with contour, elongated jacket, axial coverage sliders and co-/counterflow.
+- Turn and manifold components with explicit reference diameter and local hydraulic K loss.
+- Feedline arrows replace line blocks in new workspace templates; selectable panels expose inputs and steady-state outputs.
+- Explicit, reversible legacy line migration; imported cooling defaults preserve full counterflow coverage.
+- Partial coverage is explicitly limited to the cooled region. Gasgenerator chemistry, gas-pipe losses, multiple cooling passes and branched networks remain outside this version.
+
 # AstroForge Lite 2.2 · Regenerative Cooling Preview
 
 Regenerative Kühlung wird jetzt aus Kanalgeometrie und Kammer-/Düsenkontur berechnet. Brennstoffmassenstrom und Eintrittszustand stammen aus dem Feed-System; berechneter Druckverlust und Kühlmittelaustritt wirken auf den Versorgungspfad zurück.

@@ -26,11 +26,16 @@ export function solveCooling({params:p,geometry:g,design,thermo,data,massFlowKgS
  if(!(gas.cpJkgK>0&&gas.prandtl>0&&gas.gamma>1))throw new Error('Frozen-Gastransportdaten fehlen.');
  const height=p.channelHeightMm/1000,wall=p.wallThicknessMm/1000,kw=p.wallConductivityWmK;
  const throatX=g.contour.reduce((a,b)=>b.r<a.r?b:a).x,end=g.contour.at(-1).x;
+ const startFraction=p.coolingStart??0,endFraction=p.coolingEnd??1,direction=p.flowDirection??'counter';
+ if(!['counter','co'].includes(direction))throw new Error('Kühlung: unbekannte Strömungsrichtung.');
+ if(!Number.isFinite(startFraction)||!Number.isFinite(endFraction)||startFraction<0||endFraction>1||endFraction-startFraction<.01-1e-10)throw new Error('Kühlstrecke: Start und Ende müssen zwischen 0 und 100 % liegen, mit mindestens 1 % Abstand.');
+ const startX=startFraction*end,endX=endFraction*end,length=endX-startX;
+ const inletX=direction==='counter'?endX:startX,outletX=direction==='counter'?startX:endX;
  // Include all geometry breakpoints as well as a uniform refinement: exactly the displayed contour.
- const xs=[...new Set([...g.contour.map(v=>v.x),...Array.from({length:p.stations+1},(_,i)=>i*end/p.stations)])].sort((a,b)=>a-b);
+ const xs=[...new Set([startX,endX,...g.contour.map(v=>v.x).filter(x=>x>startX&&x<endX),...Array.from({length:p.stations+1},(_,i)=>startX+i*length/p.stations)])].sort((a,b)=>direction==='counter'?b-a:a-b);
  const section=x=>{const r=radiusAt(g.contour,x),pitch=2*Math.PI*(r+wall+height/2)/p.channelCount,width=pitch*p.channelWidthFraction;return {r,pitch,width,area:width*height*p.channelCount};};
- const inletStaticPressureBar=staticPressureAt(data,inletTemperatureK,inletPressureBar,section(end).area,mdot);
- let temperature=inletTemperatureK,pressure=inletStaticPressureBar,heatW=0;const start=coolantAt(data,temperature,pressure),startV=mdot/(start.rhoKgM3*section(end).area),stations=[],warnings=new Set();
+ const inletStaticPressureBar=staticPressureAt(data,inletTemperatureK,inletPressureBar,section(inletX).area,mdot);
+ let temperature=inletTemperatureK,pressure=inletStaticPressureBar,heatW=0;const start=coolantAt(data,temperature,pressure),startV=mdot/(start.rhoKgM3*section(inletX).area),stations=[],warnings=new Set();
  const wallState=(x,tm,pm)=>{
   const s=section(x),ar=(s.r/g.throatRadiusM)**2,mach=machFromArea(ar,gas.gamma,x>throatX),z=1+(gas.gamma-1)*mach*mach/2,recovery=thermo.tcK/z*(1+gas.prandtl**(1/3)*(z-1));
   const f=coolantAt(data,tm,pm),velocity=mdot/(f.rhoKgM3*s.area),dh=2*s.width*height/(s.width+height),re=f.rhoKgM3*velocity*dh/f.muPaS,pr=f.cpJkgK*f.muPaS/f.kWmK;
@@ -45,15 +50,15 @@ export function solveCooling({params:p,geometry:g,design,thermo,data,massFlowKgS
   return {f,tr,dh,velocity,profile:{xM:x,radiusM:s.r,mach,gasRecoveryTemperatureK:recovery,coolantTemperatureK:tm,coolantPressureBar:pm,hotWallTemperatureK:tw,coldWallTemperatureK:tw-q*wall/kw,heatFluxWm2:q,gasHTCWm2K:q/(recovery-tw),coolantHTCWm2K:hc,reynolds:re,channelWidthMm:s.width*1000,velocityMS:velocity}};
  };
  const addBoundary=(x,t,p)=>stations.push({...wallState(x,t,p).profile,sampleKind:'boundary',segmentHeatW:0,frictionDropBar:0,accelerationDropBar:0});
- addBoundary(end,temperature,pressure);
- for(let i=xs.length-1;i>0;i--){
-  const x0=xs[i],x1=xs[i-1],x=(x0+x1)/2,s=section(x),a=section(x0),b=section(x1),ds=Math.hypot(x0-x1,a.r-b.r),hotArea=2*Math.PI*s.r*ds;
+ addBoundary(inletX,temperature,pressure);
+ for(let i=0;i<xs.length-1;i++){
+  const x0=xs[i],x1=xs[i+1],x=(x0+x1)/2,s=section(x),a=section(x0),b=section(x1),ds=Math.hypot(x0-x1,a.r-b.r),hotArea=2*Math.PI*s.r*ds;
   const pin=pressure,tin=temperature,fluidIn=coolantAt(data,tin,pin),vin=mdot/(fluidIn.rhoKgM3*a.area);
   let tout=tin,pout=pin,record,converged=false;
   for(let iteration=0;iteration<100;iteration++){
    const tm=(tin+tout)/2,pm=(pin+pout)/2,local=wallState(x,tm,pm),{f,tr,dh,velocity}=local;
    const Q=local.profile.heatFluxWm2*hotArea,fo=coolantAt(data,tout,pout),vout=mdot/(fo.rhoKgM3*b.area);
-   const loss=(tr.darcy*ds/dh+p.minorK*(x0-x1)/end)*f.rhoKgM3*velocity*velocity/2;
+   const loss=(tr.darcy*ds/dh+p.minorK*Math.abs(x0-x1)/length)*f.rhoKgM3*velocity*velocity/2;
    // Momentum acceleration integral; variable area may yield static pressure recovery.
    const acceleration=(fluidIn.rhoKgM3+fo.rhoKgM3)/2*(vout*vout-vin*vin)/2;
    const nextP=pin-(loss+acceleration)/1e5;
@@ -66,7 +71,8 @@ export function solveCooling({params:p,geometry:g,design,thermo,data,massFlowKgS
   if(!converged)throw new Error('Kühlkanaliteration konvergiert nicht.');
   coolantAt(data,tout,pout);temperature=tout;pressure=pout;heatW+=record.segmentHeatW;stations.push(record);addBoundary(x1,temperature,pressure);
  }
- const finish=coolantAt(data,temperature,pressure),finishV=mdot/(finish.rhoKgM3*section(0).area),maxHotWallTemperatureK=Math.max(...stations.map(s=>s.hotWallTemperatureK));
+ const finish=coolantAt(data,temperature,pressure),finishV=mdot/(finish.rhoKgM3*section(outletX).area),maxHotWallTemperatureK=Math.max(...stations.map(s=>s.hotWallTemperatureK));
  const outletPressureBar=pressure+finish.rhoKgM3*finishV**2/2/1e5;
- return {mode:'channels',heatKW:heatW/1000,dropBar:inletPressureBar-outletPressureBar,inletTemperatureK,outletTemperatureK:temperature,inletPressureBar,outletPressureBar,inletStaticPressureBar,outletStaticPressureBar:pressure,massFlowKgS:mdot,maxHotWallTemperatureK,maxHeatFluxWm2:Math.max(...stations.map(s=>s.heatFluxWm2)),wallMarginK:p.wallLimitK-maxHotWallTemperatureK,feasible:maxHotWallTemperatureK<=p.wallLimitK,throatX,energyResidualW:heatW-mdot*(finish.hJkg-start.hJkg+(finishV*finishV-startV*startV)/2),stations:stations.reverse(),warnings:[...warnings]};
+ if(startFraction>0||endFraction<1)warnings.add('Teilgekühlte Kontur: Wandtemperaturen und Grenzwertprüfung gelten ausschließlich innerhalb der gewählten Kühlstrecke. Ungekühlte Bereiche sind nicht bewertet.');
+ return {mode:'channels',flowDirection:direction,coolingStart:startFraction,coolingEnd:endFraction,inletXM:inletX,outletXM:outletX,cooledLengthM:length,fullCoverage:startFraction===0&&endFraction===1,heatKW:heatW/1000,dropBar:inletPressureBar-outletPressureBar,inletTemperatureK,outletTemperatureK:temperature,inletPressureBar,outletPressureBar,inletStaticPressureBar,outletStaticPressureBar:pressure,massFlowKgS:mdot,maxHotWallTemperatureK,maxHeatFluxWm2:Math.max(...stations.map(s=>s.heatFluxWm2)),wallMarginK:p.wallLimitK-maxHotWallTemperatureK,feasible:maxHotWallTemperatureK<=p.wallLimitK,throatX,energyResidualW:heatW-mdot*(finish.hJkg-start.hJkg+(finishV*finishV-startV*startV)/2),stations:stations.sort((a,b)=>a.xM-b.xM),warnings:[...warnings]};
 }

@@ -95,3 +95,10 @@ Physische Android-Hardware, installierte Android-PWA, unterschiedliche Android-B
 - Projekt speichert den Entwurf; nach Import neu rechnen. Ergebnis-JSON ist ein separater Export mit Eingabestand und Herkunft.
 
 Diese Entscheidungen ermöglichen einen eigenständigen Windows-/Android-Vorführprototyp. Sie sind in UI und Anleitung benannt und dürfen nicht als vollständige Umsetzung aller langfristigen Fachmodelle verkauft werden.
+
+
+## 2.3 engine section and feedlines — 2026-11-04
+
+Added solver regressions for co-/counterflow inlet locations, partial profile endpoints, energy conservation, legacy full-coverage defaults, invalid interval/direction rejection, fitting K losses, edge hydraulic losses, JSON persistence, and reversible/idempotent migration including custom diameters. Ideal gas arrows use turbine exit / chamber inlet states rather than nozzle exhaust states.
+
+Browser verification: desktop 1280×720 and responsive viewport 390×844. Legacy-line conversion, cooling coverage and flow direction, manifold insertion before the jacket, recomputation, and feedline length editing exercised through the UI. Document width at 390 px remained 390 px. No browser error logs observed. Responsive viewport testing is not a physical Android-device test. Partial coverage does not validate uncooled wall regions; manifold and turn are lumped serial loss elements, not a branched or multipass solver.

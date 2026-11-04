@@ -70,3 +70,33 @@ test('boundary temperatures participate in the reported maximum and heat is coun
  for(const r of [low,high]){assert.equal(r.ok,true,JSON.stringify(r.errors));const c=r.cycle.cooling[0],points=c.stations;close(points[0].xM,0);close(points.at(-1).xM,r.geometry.contour.at(-1).x);assert.ok(points.some(s=>s.xM===c.throatX));close(Math.max(...points.map(s=>s.hotWallTemperatureK)),c.maxHotWallTemperatureK);close(points.reduce((sum,s)=>sum+s.segmentHeatW,0),c.heatKW*1000,1e-6);assert.ok(points.filter(s=>s.sampleKind==='boundary').every(s=>s.segmentHeatW===0));}
  assert.ok(Math.abs(low.cycle.cooling[0].maxHotWallTemperatureK-high.cycle.cooling[0].maxHotWallTemperatureK)<1);
 });
+test('flow direction follows the selected inlet; partial jackets conserve energy and bound their profiles',()=>{
+ for(const direction of ['counter','co']){
+  const p=fixture(),n=p.nodes.find(n=>n.type==='regen');Object.assign(n.params,{flowDirection:direction,coolingStart:.2,coolingEnd:.8});
+  const r=solve(p);assert.equal(r.ok,true,JSON.stringify(r.errors));const c=r.cycle.cooling[0],end=r.geometry.contour.at(-1).x;
+  close(c.stations[0].xM,.2*end);close(c.stations.at(-1).xM,.8*end);close(c.cooledLengthM,.6*end);
+  const inlet=direction==='co'?c.stations[0]:c.stations.at(-1),outlet=direction==='co'?c.stations.at(-1):c.stations[0];
+  close(inlet.coolantTemperatureK,c.inletTemperatureK);close(outlet.coolantTemperatureK,c.outletTemperatureK);
+  assert.ok(c.outletTemperatureK>c.inletTemperatureK);assert.ok(c.dropBar>0);assert.ok(Math.abs(c.energyResidualW)<.01);
+  assert.equal(c.fullCoverage,false);assert.ok(c.warnings.some(w=>w.includes('Ungekühlte Bereiche')));
+ }
+});
+test('older channel projects retain full counterflow coverage and invalid ranges fail explicitly',()=>{
+ const p=fixture(),n=p.nodes.find(n=>n.type==='regen');delete n.params.flowDirection;delete n.params.coolingStart;delete n.params.coolingEnd;
+ const r=solve(p);assert.equal(r.ok,true);assert.equal(r.cycle.cooling[0].flowDirection,'counter');assert.equal(r.cycle.cooling[0].fullCoverage,true);
+ for(const edit of [{coolingStart:.8,coolingEnd:.2},{coolingStart:-.1},{coolingEnd:1.1},{flowDirection:'wrong'}]){
+  const q=structuredClone(p);Object.assign(q.nodes.find(n=>n.type==='regen').params,edit);assert.equal(solve(q).ok,false);
+ }
+});
+test('turn and manifold use their explicit reference area and preserve the serial feed balance',()=>{
+ const baseline=solve(createTemplate('pressure'));
+ for(const type of ['turn','manifold']){
+  const p=createTemplate('pressure'),edge=p.edges.find(e=>e.from==='fuel-valve');
+  p.nodes.push({id:'fitting',type,label:type,medium:'fuel',section:'fuel',x:0,y:0,params:{diameterMm:18,k:2}});
+  p.edges.push({id:'fitting-out',from:'fitting',to:edge.to});edge.to='fitting';
+  const r=solve(p);assert.equal(r.ok,true,JSON.stringify(r.errors));const m=r.feeds.fuel.massFlowKgS,A=Math.PI*.018**2/4;
+  close(r.stations.fitting.dropBar,2*m*m/(2*810*A*A)/1e5);
+  close(r.feeds.fuel.requiredBar-baseline.feeds.fuel.requiredBar,r.stations.fitting.dropBar);
+  p.nodes.at(-1).params.diameterMm=0;assert.equal(solve(p).ok,false);
+ }
+});

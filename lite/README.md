@@ -103,3 +103,12 @@ Der bisherige 2.0-Stand wurde auf Desktop und in mobiler Browseremulation sowie 
 ## Prüfnachweise
 
 Automatisierte Tests laufen mit `npm test`. Den tatsächlichen Umfang und Status der numerischen, Browser- und Paketprüfungen dokumentiert `VALIDATION.md`. CEA-Vergleichsstichproben sind keine globale Fehlergrenze oder experimentelle Validierung; der zusätzliche Cycle-Umfang benötigt eigene Nachweise.
+
+
+## Stand 2.3: Triebwerks-Section und Feedlines
+
+Unter **Systemstruktur → Triebwerks-Section** erscheinen Injektor, Brennkammer, Glockendüse und der seitliche Kühlmantel. Die Regler setzen Beginn/Ende der Kühlstrecke in Prozent der axialen Konturlänge; nach einer Berechnung werden zusätzlich Millimeter angezeigt. Gleichstrom läuft mit der Gasströmung, Gegenstrom dagegen. Teilgekühlte Entwürfe bewerten ausschließlich den markierten Bereich. Umlenkung und Manifold sind serielle Fluidbauteile mit eigenem Bezugsdurchmesser und Verlustbeiwert K; der Manifold repräsentiert den Ein-/Austrittsverteiler eines Kanalbündels, keine getrennt gelösten Zweige. Umlenkungen erzeugen keinen automatischen zweiten Kühlpass.
+
+Neue Vorlagen benötigen keine separaten Leitungsblöcke: **Pfeil auswählen**, Länge, Durchmesser, Rauheit und K im eingeblendeten Panel bearbeiten und neu berechnen. Das Panel zeigt Temperatur, Massenstrom, erforderliches Gesamtdruckbudget und Druckverlust. Gasverbindungen zeigen den modellierten Zustand, bleiben jedoch ideal ohne eigene Rohrverluste. Die separate Treibgasquelle ist kein berechneter Gasgenerator; dort wird kein berechnetes O/F behauptet.
+
+Bestehende Projekte bleiben erhalten. Unter **Triebwerksentwurf → Leitungen in Pfeile übernehmen** lassen sich unverzweigte alte Leitungsblöcke mit ihren Parametern übernehmen (rückgängig möglich). Neue Kühlparameter fehlen in Altdateien: dann gilt weiterhin volle Konturlänge und Gegenstrom. Nach Änderungen bleiben alte Ergebnisse ausdrücklich als veraltet markiert.

@@ -623,3 +623,14 @@ input[aria-invalid="true"] { border-color: var(--red); background: #291e1d; }
   .cooling-caption, .cooling-inherited { font-size: 11px; }
   .cooling-table button { min-height: 44px; }
 }
+
+.engine-section {padding:16px 22px;border-bottom:1px solid var(--line,#34434c);max-height:55%;overflow:auto;flex-shrink:0;background:#142027;}
+.engine-section[hidden]{display:none}
+.engine-title{display:flex;justify-content:space-between;align-items:start;gap:12px}.engine-title h2{font-size:17px;margin:6px 0}
+.engine-drawing svg{display:block;width:100%;max-height:230px}.engine-parts{display:flex;gap:5px;flex-wrap:wrap}
+.engine-controls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:12px}.engine-controls label{font-size:11px;color:#a6b4bd;display:grid;gap:7px}.engine-controls output{color:#f0b267}.engine-controls input{width:100%;accent-color:#f0b267;min-height:24px}.engine-controls select{width:100%;min-width:0;background:#19242b;color:#e6edf1;border:1px solid #40505a;padding:8px;border-radius:4px}
+.edge-panel{position:absolute;width:290px;max-width:calc(100% - 16px);max-height:85%;overflow:auto;padding:14px;background:#1b2a32;border:1px solid #68808c;border-radius:10px;box-shadow:0 12px 32px #0007;color:#e6edf1;font-size:12px;z-index:4}.edge-panel[hidden]{display:none}.edge-panel h3{font-size:14px;margin:0 0 8px}.edge-panel .field{margin-bottom:6px}.edge-panel .field-hint{display:none}.edge-panel .field input{min-width:0;width:100%}.edge-panel .pressure-row{font-size:11px}.edge-panel .edge-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media(max-width:600px){.engine-section{padding:12px;max-height:58%}.engine-controls{grid-template-columns:1fr 1fr;gap:8px}.engine-controls label:last-child{grid-column:1/-1}.engine-drawing svg{min-height:120px}.engine-parts .button{font-size:10px;padding:5px}}
+
+.main-stage[data-engine="true"] #canvas,.main-stage[data-engine="true"] .canvas-footer{display:none}
+.main-stage[data-engine="true"] .engine-section{max-height:none;flex:1;min-height:0}

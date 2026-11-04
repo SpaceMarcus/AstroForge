@@ -1,8 +1,9 @@
+import {ENGINE_TYPES} from './engine-ui.js';
 const NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 152;
 const HEIGHT = 104;
 const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb', mechanical: '#c2a2ed' };
-const TYPE_NAMES = { source: 'VERSORGUNG', line: 'LEITUNG', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE', pump: 'PUMPE', regen: 'KÜHLKANAL', shaft: 'WELLE', gasSource: 'GASVERSORGUNG', turbine: 'TURBINE', exhaust: 'ABGASAUSLASS' };
+const TYPE_NAMES = { source: 'VERSORGUNG', line: 'LEITUNG', turn: 'UMLENKUNG', manifold: 'MANIFOLD', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE', pump: 'PUMPE', regen: 'KÜHLKANAL', shaft: 'WELLE', gasSource: 'GASVERSORGUNG', turbine: 'TURBINE', exhaust: 'ABGASAUSLASS' };
 
 export function fluidPortsFor(type) {
   return { input: !['source', 'gasSource', 'shaft'].includes(type), output: !['nozzle', 'exhaust', 'shaft'].includes(type) };
@@ -43,6 +44,7 @@ export class GraphEditor {
     this.callbacks = callbacks;
     this.project = { nodes: [], edges: [] };
     this.options = { section: null };
+    this.edgePanel=document.createElement('div');this.edgePanel.className='edge-panel';this.edgePanel.hidden=true;
     this.view = { x: -50, y: -50, width: 1000, height: 600 };
     this.pendingFrom = null;
     this.selectedEdge = null;
@@ -88,7 +90,7 @@ export class GraphEditor {
     this.hint.className = 'graph-hint';
     this.hint.setAttribute('role', 'status');
     this.hint.style.cssText = 'position:absolute;left:16px;top:14px;max-width:calc(100% - 32px);color:#aabcc7;font:11px/1.5 system-ui;pointer-events:none;background:#10181ddd;padding:6px 9px;border-radius:5px';
-    this.root.append(this.svg, this.controls, this.hint);
+    this.root.append(this.svg, this.controls, this.hint, this.edgePanel);
     container.append(this.root);
     this.listen('pointerdown', e => this.pointerDown(e));
     this.listen('pointermove', e => this.pointerMove(e));
@@ -112,7 +114,7 @@ export class GraphEditor {
 
   listen(type, fn, extra = {}) { this.svg.addEventListener(type, fn, { ...extra, signal: this.abort.signal }); }
   aspect() { return Math.max(.25, this.root.clientWidth / Math.max(1, this.root.clientHeight)); }
-  visibleNodes() { return this.project.nodes.filter(n => !this.options.section || n.section === this.options.section); }
+  visibleNodes() { return this.project.nodes.filter(n => !this.options.section || (this.options.section==='engine'?ENGINE_TYPES.includes(n.type):n.section === this.options.section)); }
   point(event) {
     const rect = this.svg.getBoundingClientRect();
     return { x: this.view.x + (event.clientX - rect.left) / rect.width * this.view.width, y: this.view.y + (event.clientY - rect.top) / rect.height * this.view.height };
@@ -216,7 +218,7 @@ export class GraphEditor {
       const color = COLORS[from.medium] || COLORS.gas;
       const path = connectionPath(a, b);
       this.scene.append(svg('path', { d: path, fill: 'none', stroke: this.selectedEdge === edge.id ? '#fff' : color, 'stroke-width': this.selectedEdge === edge.id ? 3 : 2, 'stroke-opacity': this.options.stale ? .5 : .8 }));
-      this.scene.append(svg('path', { d: path, fill: 'none', stroke: 'transparent', 'stroke-width': 18, class: 'graph-edge-hit', 'data-edge': edge.id, role: 'button', tabindex: 0, 'aria-label': `Verbindung ${from.label} nach ${to.label} auswählen` }));
+      const hit=svg('g',{class:'graph-edge-hit','data-edge':edge.id,role:'button',tabindex:0,'aria-label':`Verbindung ${from.label} nach ${to.label} auswählen`});hit.append(svg('path',{d:path,fill:'none',stroke:'transparent','stroke-width':18}),svg('circle',{cx:(a.x+b.x)/2,cy:(a.y+b.y)/2,r:12,fill:'transparent'}));this.scene.append(hit);
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       this.scene.append(svg('path', { d: `M ${mx - 3} ${my - 4} L ${mx + 3} ${my} L ${mx - 3} ${my + 4}`, fill: 'none', stroke: color, 'stroke-width': 1.5 }));
       if (this.selectedEdge === edge.id) {
@@ -230,6 +232,7 @@ export class GraphEditor {
       }
     }
     for (const node of nodes) this.renderNode(node);
+    this.renderEdgePanel(nodeMap);
     if (!nodes.length) {
       this.scene.append(svg('text', { x: 320, y: 200, 'text-anchor': 'middle', fill: '#91a5b2', 'font-size': 15 }, 'Komponenten aus der Bibliothek hinzufügen'));
     }
@@ -240,6 +243,18 @@ export class GraphEditor {
         match?.focus({ preventScroll: true });
       }
     }
+  }
+  renderEdgePanel(nodeMap) {
+    const edge=this.project.edges.find(e=>e.id===this.selectedEdge);
+    this.edgePanel.hidden=!edge;
+    if(!edge)return;
+    const a=nodeMap.get(edge.from),b=nodeMap.get(edge.to);if(!a||!b)return;
+    if(!this.edgePanel.contains(document.activeElement)||this.edgePanel.dataset.edgeId!==edge.id){this.edgePanel.innerHTML=this.callbacks.edgeContent?.(edge)||'';this.edgePanel.dataset.edgeId=edge.id;}
+    const pa=this.port(a,true),pb=this.port(b,false,a.medium),left=((pa.x+pb.x)/2-this.view.x)/this.view.width*this.root.clientWidth;
+    this.edgePanel.style.left=Math.max(8,Math.min(left+15,this.root.clientWidth-310))+'px';
+    const top=((pa.y+pb.y)/2-this.view.y)/this.view.height*this.root.clientHeight;
+    this.edgePanel.style.top=Math.max(42,Math.min(top-30,this.root.clientHeight-this.edgePanel.offsetHeight-8))+'px';
+    if(this.options.stale){const status=this.edgePanel.querySelector('.edge-status');if(status)status.textContent='VERALTET · neu berechnen';}
   }
   renderNode(node) {
     const pos = this.position(node), color = COLORS[node.medium] || COLORS.gas;
@@ -298,6 +313,10 @@ export class GraphEditor {
       case 'source':
         append('rect', { x: 5, y: 1, width: 25, height: 30, rx: 10 });
         append('path', { d: 'M 5 12 Q 17 18 30 12 M 30 19 H 38 M 10 34 H 25' }); break;
+      case 'turn':
+        g.append(svg('path',{d:'M2 19V8Q2 2 8 2H24 M19 -2L24 2L19 6'}));return;
+      case 'manifold':
+        g.append(svg('path',{d:'M2 12H10V2H23 M10 12H23 M10 12V22H23'}));return;
       case 'line':
         append('path', { d: 'M 0 12 H 36 M 0 22 H 36 M 6 8 V 26 M 30 8 V 26' }); break;
       case 'valve':

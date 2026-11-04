@@ -1,6 +1,7 @@
 import {CHANNEL_DEFAULTS} from './cooling-config.js';
-export const TYPES = {source:'Versorgung',line:'Leitung',valve:'Ventil',sensor:'Messstelle',pump:'Pumpe',regen:'Regenerativkühlung',shaft:'Welle / Antrieb',gasSource:'Treibgasquelle',turbine:'Turbine',exhaust:'Abgasdüse',injector:'Injektor',chamber:'Brennkammer',nozzle:'Glockendüse'};
+export const TYPES = {source:'Versorgung',line:'Leitung',turn:'Umlenkung',manifold:'Manifold',valve:'Ventil',sensor:'Messstelle',pump:'Pumpe',regen:'Regenerativkühlung',shaft:'Welle / Antrieb',gasSource:'Treibgasquelle',turbine:'Turbine',exhaust:'Abgasdüse',injector:'Injektor',chamber:'Brennkammer',nozzle:'Glockendüse'};
 export const DEFAULT_PARAMS = {
+ turn:{diameterMm:18,k:1.5},manifold:{diameterMm:18,k:1},
  source:{pressureBar:55,temperatureK:293.15},line:{lengthM:1,diameterMm:20,roughnessMm:.01,k:.5},valve:{k:2,open:true},sensor:{quantity:'pressure'},injector:{fuelDropBar:6,oxDropBar:6},
  pump:{riseBar:30,efficiency:.7,shaftId:''},regen:{...CHANNEL_DEFAULTS},shaft:{efficiency:.96,rpm:30000,motorKW:30},
  gasSource:{pressureBar:30,temperatureK:900,massFlowKgS:.15,cpJkgK:2200,gamma:1.25},turbine:{outletBar:2,efficiency:.7,shaftId:''},exhaust:{exitBar:1.01325,efficiency:.95},chamber:{},nozzle:{}
@@ -28,7 +29,7 @@ export function createProject(name='AF–01 / Pressure-fed') {
   return {format:'astroforge-lite',version:1,name,design:{thrustN:10000,pcBar:30,of:2.6,eps:12,paBar:1.01325,lstarM:1.1,contractionRatio:3},nodes,edges:pairs.map(([from,to],i)=>({id:'e'+i,from,to})),updatedAt:new Date().toISOString()};
 }
 export function fingerprint(project) {
-  return JSON.stringify({design:project.design,nodes:project.nodes.map(({id,type,medium,section,params})=>({id,type,medium,section,params})).sort((a,b)=>a.id.localeCompare(b.id)),edges:project.edges.map(({from,to})=>({from,to})).sort((a,b)=>(a.from+a.to).localeCompare(b.from+b.to))});
+  return JSON.stringify({design:project.design,nodes:project.nodes.map(({id,type,medium,section,params})=>({id,type,medium,section,params})).sort((a,b)=>a.id.localeCompare(b.id)),edges:project.edges.map(({id,from,to,pipe})=>({id,from,to,pipe})).sort((a,b)=>(a.from+a.to).localeCompare(b.from+b.to))});
 }
 export function createTemplate(id='pressure') {
  const template=TEMPLATES.find(t=>t.id===id);if(!template)throw Error('Unbekannte Vorlage.');
@@ -63,7 +64,7 @@ export function parseProject(text) {
     ids.add(n.id);
   }
   const edgeIds=new Set();
-  for(const e of p.edges){if(!e||typeof e.id!=='string'||!/^[\w-]{1,80}$/.test(e.id)||edgeIds.has(e.id)||!ids.has(e.from)||!ids.has(e.to)||e.from===e.to)throw Error('Ungültige Verbindung.');edgeIds.add(e.id);}
+  for(const e of p.edges){if(!e||typeof e.id!=='string'||!/^[\w-]{1,80}$/.test(e.id)||edgeIds.has(e.id)||!ids.has(e.from)||!ids.has(e.to)||e.from===e.to)throw Error('Ungültige Verbindung.');if(e.pipe&&(!['lengthM','diameterMm','roughnessMm','k'].every(k=>Number.isFinite(e.pipe[k]))||typeof e.pipe!=='object'))throw Error('Ungültige Feedline-Parameter.');edgeIds.add(e.id);}
   return {format:p.format,version:p.version,name:p.name,design:clone(p.design),nodes:clone(p.nodes),edges:clone(p.edges),updatedAt:new Date().toISOString()};
 }
 export class History {
@@ -71,4 +72,27 @@ export class History {
  commit(project){this.past.push(clone(this.current));if(this.past.length>60)this.past.shift();this.current=clone(project);this.future=[];return this.current;}
  undo(){if(this.past.length){this.future.push(this.current);this.current=this.past.pop();}return clone(this.current);}
  redo(){if(this.future.length){this.past.push(this.current);this.current=this.future.pop();}return clone(this.current);}
+}
+// Keep legacy line nodes readable; new workspace templates store their hydraulics on arrows.
+export function compactFeedlines(project){
+ const p=clone(project);
+ for(const n of [...p.nodes].filter(n=>n.type==='line')){
+  const incoming=p.edges.filter(e=>e.to===n.id),outgoing=p.edges.filter(e=>e.from===n.id);
+  if(incoming.length!==1||outgoing.length!==1)continue;
+  const a=incoming[0],b=outgoing[0];
+  if(a.pipe||b.pipe)continue;
+  p.edges=p.edges.filter(e=>e.id!==a.id&&e.id!==b.id);
+  p.edges.push({id:a.id,from:a.from,to:b.to,pipe:clone(n.params)});
+  p.nodes=p.nodes.filter(v=>v.id!==n.id);
+ }
+ for(const source of p.nodes.filter(n=>n.type==='source')){
+  let node=source,bore=source.medium==='ox'?22:18;const seen=new Set();
+  while(node&&!seen.has(node.id)&&node.type!=='injector'){
+   seen.add(node.id);const edge=p.edges.find(e=>e.from===node.id);if(!edge)break;
+   if(node.type==='line')bore=node.params.diameterMm;
+   if(edge.pipe)bore=edge.pipe.diameterMm;else edge.pipe={lengthM:0,diameterMm:bore,roughnessMm:.01,k:0};
+   node=p.nodes.find(n=>n.id===edge.to);
+  }
+ }
+ return p;
 }
