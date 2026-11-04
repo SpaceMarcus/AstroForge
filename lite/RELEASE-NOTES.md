@@ -1,3 +1,7 @@
+## 2.5.1 — Getrennte Stoffauswahl
+
+Treibstoff und Oxidator haben eigene Auswahlfelder. Nicht unterstützte Kombinationen sind ausgegraut. Auswahl, O/F-Startwerte und Versorgungstemperaturen verwenden weiterhin denselben geprüften Stoffkatalog.
+
 ## 2.5.0 — Stoffkombinationen und Logikkonsistenz
 
 - Elf definierte Kombinationen: LOX mit RP-1/Methan/Wasserstoff/Ethanol/Propan; N2O und HTP 90 % jeweils mit RP-1/Ethanol/Propan.
