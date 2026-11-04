@@ -2,7 +2,7 @@
 
 Ein lokaler Arbeitsraum für den stationären LOX/RP-1-Triebwerksvorentwurf mit grafisch bearbeitbaren Komponenten. Version 2.2 ergänzt eine geometriegekoppelte Kanalkühlung mit Temperaturprofilen, Wärmestromdichte und Druckverlust. Pumpen, Antriebswellen sowie ein separat vorgegebener Treibgaszweig mit Turbine und Abgasdüse bleiben Teil des Arbeitsraums. Komponenten, Leistung und vorläufige Geometrie gehören zum selben Projekt.
 
-Der aktuelle Stand wird im GitHub-Repository geführt. Quellcode und Versionsnachweise dieses Branches sind maßgeblich. Die früher veröffentlichte private 2.0-Site wurde **nicht auf 2.2 aktualisiert** und ist kein Zugang zum aktuellen Cycle-Umfang.
+Der Quellcode wird im GitHub-Repository geführt. Die aktuelle private [AstroForge-Site](https://astroforge-2-lite.marcusmohren.chatgpt.site) dient zum Testen auf Windows und Android und wird bei abgeschlossenen Weiterentwicklungen mit aktualisiert. Die Anmeldung mit dem berechtigten ChatGPT-Konto ist erforderlich. Den sichtbaren Versionsstand und die Neuerungen findest du im Kopfbereich beziehungsweise unter Hilfe.
 
 ## Starten
 
@@ -20,7 +20,9 @@ npm start
 
 Der Entwicklungsstand wurde mit Node.js 25.9.0 erstellt. Die Anwendung hat keine externen Laufzeitpakete und lädt keine Schriftarten oder Bibliotheken von einem CDN.
 
-**Android mit dem aktuellen Stand:** Den Node-Server mit `npm run build` und `npm start` auf Windows starten. Das Handy mit demselben Netzwerk verbinden und im Browser `http://<Windows-Netzwerkadresse>:4173` öffnen, beispielsweise mit der IPv4-Adresse des WLAN-Adapters aus `ipconfig`. Der Windows-Firewallzugriff für diesen lokalen Server muss im verwendeten Netzwerk erlaubt sein. `localhost` auf dem Handy bezeichnet das Handy, nicht den Windows-Rechner. Die EXE auf Port 4174 ist dafür nicht geeignet, weil sie nur an die lokale Loopback-Adresse bindet.
+**Android:** Die [AstroForge-Site](https://astroforge-2-lite.marcusmohren.chatgpt.site) im Browser öffnen und anmelden.
+
+**Alternativ im lokalen Netzwerk:** Den Node-Server mit `npm run build` und `npm start` auf Windows starten. Das Handy mit demselben Netzwerk verbinden und im Browser `http://<Windows-Netzwerkadresse>:4173` öffnen, beispielsweise mit der IPv4-Adresse des WLAN-Adapters aus `ipconfig`. Der Windows-Firewallzugriff für diesen lokalen Server muss im verwendeten Netzwerk erlaubt sein. `localhost` auf dem Handy bezeichnet das Handy, nicht den Windows-Rechner. Die EXE auf Port 4174 ist dafür nicht geeignet, weil sie nur an die lokale Loopback-Adresse bindet.
 
 Android verwendet die responsive Browseroberfläche, keine native APK. Installation und Service-Worker-Offlinefunktionen sind über eine einfache HTTP-Netzwerkadresse nicht verfügbar; die Vorführung über diesen Weg benötigt den laufenden Windows-Server. GitHub stellt den Quellcode bereit und ist hier kein automatisch eingerichtetes HTTPS-App-Hosting.
 
