@@ -1,8 +1,8 @@
-import {ENGINE_TYPES} from './engine-ui.js';
+const ENGINE_TYPES=['injector','chamber','nozzle'];
 const NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 152;
 const HEIGHT = 104;
-const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb', mechanical: '#c2a2ed' };
+const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb', mechanical: '#c2a2ed', engine: '#b4bfcb' };
 const TYPE_NAMES = { source: 'VERSORGUNG', line: 'LEITUNG', turn: 'UMLENKUNG', manifold: 'MANIFOLD', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE', pump: 'PUMPE', regen: 'KÜHLKANAL', shaft: 'WELLE', gasSource: 'GASVERSORGUNG', turbine: 'TURBINE', exhaust: 'ABGASAUSLASS' };
 
 export function fluidPortsFor(type) {
@@ -168,15 +168,15 @@ export class GraphEditor {
     const nodeMap = new Map(this.project.nodes.map(n => [n.id, n]));
     this.hint.textContent = this.pendingFrom ? 'Ausgang gewählt · Zielanschluss antippen · Esc zum Abbrechen' : this.selectedEdge ? 'Verbindung gewählt · × oder Entf zum Entfernen' : 'Bauteil auswählen · Anschlüsse verbinden · Hintergrund verschieben';
     if (!this.options.section) {
-      for (const section of ['ox', 'fuel']) {
-        const sectionNodes = nodes.filter(n => n.section === section).map(n => this.position(n));
+      for (const section of ['ox', 'fuel', 'engine']) {
+        const sectionNodes = nodes.filter(n => section==='engine'?ENGINE_TYPES.includes(n.type):n.section === section).map(n => this.position(n));
         if (!sectionNodes.length) continue;
         const b = nodeBounds(sectionNodes);
         const group = svg('g', { 'data-section': section });
         group.append(svg('rect', { x: b.x - 24, y: b.y - 48, width: b.width + 48, height: b.height + 72, rx: 12, fill: COLORS[section], 'fill-opacity': .025, stroke: COLORS[section], 'stroke-opacity': .23, 'stroke-dasharray': '5 5' }));
-        const link = svg('g', { class: 'graph-section-link', role: 'button', tabindex: 0, 'aria-label': `${section === 'ox' ? 'Oxidator' : 'Brennstoff'}-Section öffnen`, 'data-section-open': section });
+        const link = svg('g', { class: 'graph-section-link', role: 'button', tabindex: 0, 'aria-label': `${section === 'engine' ? 'Triebwerks' : section === 'ox' ? 'Oxidator' : 'Brennstoff'}-Section öffnen`, 'data-section-open': section });
         link.append(svg('rect', { x: b.x - 10, y: b.y - 46, width: 190, height: 36, rx: 4, fill: '#10181d' }));
-        link.append(svg('text', { x: b.x, y: b.y - 24, fill: COLORS[section], 'font-size': 10, 'font-weight': 600, 'letter-spacing': '1.1' }, section === 'ox' ? 'OXIDATOR · SECTION ↗' : 'BRENNSTOFF · SECTION ↗'));
+        link.append(svg('text', { x: b.x, y: b.y - 24, fill: COLORS[section], 'font-size': 10, 'font-weight': 600, 'letter-spacing': '1.1' }, section === 'engine' ? 'TRIEBWERK · SECTION ↗' : section === 'ox' ? 'OXIDATOR · SECTION ↗' : 'BRENNSTOFF · SECTION ↗'));
         group.append(link); this.scene.append(group);
       }
     }
