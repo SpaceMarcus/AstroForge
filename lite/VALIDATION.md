@@ -1,5 +1,28 @@
 # AstroForge 2.0 Lite Prüfstand
 
+## Erweiterung 2.1 · Cycle-Komponenten
+
+4. November 2026. **54 automatisierte Tests bestanden**, einschließlich der bisherigen Regressionstests. Neue Prüfungen betreffen Pumpendruckarbeit, Wellenbedarf/Drehmoment, unabhängige Wellen, Wärmebilanz, Treibgasverbrauch, Turbinenleistung, Abgas-Druckschub, fehlende Zuordnungen und negative Druckbudgets. Vorlagen-Roundtrip, mechanische Ergebnisinvalidierung, HTML-Escaping und Darstellung von Leistungsdefiziten wurden ebenfalls geprüft.
+
+Browserprüfung bei 1440 × 900 und 390 × 844:
+
+- Alte druckgeförderte Projektdatei lädt und berechnet weiterhin.
+- Elektrische Vorlage: Pumpenbedarf 16,71 kW, 30 kW Antrieb; Kühlmittel 293,15 → 313,64 K bei aufgeprägten 50 kW.
+- Antrieb auf 5 kW geändert: 11,71 kW Defizit in der Auswertung, Warnstatus im Arbeitsraum. Heruntergeladenes CSV enthält `insufficient_drive`.
+- Turbinenvorlage: 86,94 kW Turbinenleistung, 83,46 kW nach mechanischem Wirkungsgrad, 87,25 N Zusatzschub. System-Isp 248,3 s berücksichtigt den zusätzlichen Gasstrom; Haupt-Isp bleibt 255,4 s.
+- Auf Handygröße Messstelle hinzugefügt und per „In Leitung einsetzen“ eingebunden; anschließende Rechnung erfolgreich.
+- Wellenzuordnung der Turbine entfernt: Berechnung mit konkretem Fehler abgewiesen. Zuordnung wiederhergestellt: Rechnung erfolgreich.
+- Kein horizontales Dokument-Überlaufen bei 390 Pixeln; keine Browser-Konsolenfehler in diesen Abläufen.
+- Lokalen Server beendet: Anwendung aus Browsercache neu geladen und Turbinenvorlage inklusive Cycle-Auswertung erneut erfolgreich berechnet.
+
+Statische Anwendung neu gebaut. Windows-EXE mit diesen Webdateien neu gebündelt; EXE-Smoke-Test erfolgreich. Das aktuelle Paket heißt `AstroForge-Lite-2.1-Cycle-Windows.zip`. Physisches Android-Gerät und sauberer Windows-PC bleiben ausstehend. Der frühere private Webauftritt wurde nicht aktualisiert; GitHub enthält den aktuellen Quellstand.
+
+Diese Erweiterung ist ein Komponenten-Screening. Vorgegebene Pumpendruckerhöhung, Wärmeeintrag und Treibgasrandbedingungen schließen keinen vollständigen Triebwerkszyklus. Quellen, Gleichungen und Grenzen: `MODELS.md`.
+
+---
+
+## Historischer Prüfstand 2.0
+
 4. November 2026. Diese Datei beschreibt tatsächlich ausgeführte Prüfungen und verbleibende Grenzen.
 
 ## Automatisiert

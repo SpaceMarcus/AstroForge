@@ -1,10 +1,12 @@
-# AstroForge 2.0 Lite
+# AstroForge 2.1 Lite
 
-Ein lokaler Arbeitsraum für den stationären Vorentwurf eines druckgeförderten LOX/RP-1-Triebwerks. Komponenten, Versorgungspfade und Brennkammer-/Düsengeometrie gehören zum selben Projekt. Die Oberfläche funktioniert im Windows-Browser und passt sich Android-Handys an.
+Ein lokaler Arbeitsraum für den stationären LOX/RP-1-Triebwerksvorentwurf mit grafisch bearbeitbaren Komponenten. Version 2.1 ergänzt Pumpen, Antriebswellen, einen vereinfachten Kühlblock sowie einen separat vorgegebenen Treibgaszweig mit Turbine und Abgasdüse. Komponenten, Leistung und vorläufige Geometrie gehören zum selben Projekt.
+
+Der aktuelle Stand wird im GitHub-Repository geführt. Quellcode und Versionsnachweise dieses Branches sind maßgeblich. Die früher veröffentlichte private 2.0-Site wurde **nicht auf 2.1 aktualisiert** und ist kein Zugang zum aktuellen Cycle-Umfang.
 
 ## Starten
 
-**Windows ohne Installation:** `AstroForge-2.0-Lite.exe` aus dem Vorführpaket öffnen. Der Starter bringt seine Laufzeit und alle Web-Dateien mit und öffnet die Oberfläche im Standardbrowser. Die feste lokale Adresse ist `http://127.0.0.1:4174/`; das Starterfenster verwaltet den Server. Bei belegtem Port wird eine alternative Adresse angezeigt, deren Autosave getrennt ist. Die EXE ist noch nicht signiert; eine Abnahme auf einem sauberen Windows-PC steht aus.
+**Windows-Paket:** Sofern ein zum aktuellen Branch gehörendes 2.1-Paket vorliegt, die enthaltene AstroForge-Lite-EXE öffnen. Der Starter bringt seine Laufzeit und Web-Dateien mit und öffnet den Standardbrowser. Die feste lokale Adresse ist `http://127.0.0.1:4174/`; bei belegtem Port wird eine alternative Adresse angezeigt, deren Autosave getrennt ist. Dieser Server ist nur auf dem Windows-Rechner erreichbar. Ein älteres 2.0-Paket erhält die neuen Funktionen nicht automatisch. Paket- und Prüfnachweise stehen in `VALIDATION.md`.
 
 **Windows aus dem Quellprojekt:** Node.js installieren, anschließend `Start-AstroForge.cmd` öffnen. Das Skript erstellt die Browserdateien, startet den lokalen Server und öffnet [AstroForge Lite](http://localhost:4173). Das Serverfenster während der Nutzung geöffnet lassen. Ein zusätzliches Paket-Installieren ist nicht erforderlich.
 
@@ -18,30 +20,45 @@ npm start
 
 Der Entwicklungsstand wurde mit Node.js 25.9.0 erstellt. Die Anwendung hat keine externen Laufzeitpakete und lädt keine Schriftarten oder Bibliotheken von einem CDN.
 
-**Android:** Die gehostete Browseradresse verwenden. Veröffentlichte private Adresse: [AstroForge 2.0 Lite](https://astroforge-2-lite.marcusmohren.chatgpt.site). Privater Zugriff ist keine öffentliche Kundenfreigabe und kann eine Anmeldung benötigen.
+**Android mit dem aktuellen Stand:** Den Node-Server mit `npm run build` und `npm start` auf Windows starten. Das Handy mit demselben Netzwerk verbinden und im Browser `http://<Windows-Netzwerkadresse>:4173` öffnen, beispielsweise mit der IPv4-Adresse des WLAN-Adapters aus `ipconfig`. Der Windows-Firewallzugriff für diesen lokalen Server muss im verwendeten Netzwerk erlaubt sein. `localhost` auf dem Handy bezeichnet das Handy, nicht den Windows-Rechner. Die EXE auf Port 4174 ist dafür nicht geeignet, weil sie nur an die lokale Loopback-Adresse bindet.
 
-Optional kann ein Handy im selben Netzwerk den lokalen Windows-Server über dessen Netzwerkadresse und Port 4173 öffnen. `localhost` auf dem Handy bezeichnet das Handy, nicht den Windows-Rechner. Installation und Offlinefunktionen sind über eine einfache HTTP-Netzwerkadresse nicht verlässlich verfügbar; dafür HTTPS-Hosting verwenden.
+Android verwendet die responsive Browseroberfläche, keine native APK. Installation und Service-Worker-Offlinefunktionen sind über eine einfache HTTP-Netzwerkadresse nicht verfügbar; die Vorführung über diesen Weg benötigt den laufenden Windows-Server. GitHub stellt den Quellcode bereit und ist hier kein automatisch eingerichtetes HTTPS-App-Hosting.
 
 ## Der erste Entwurf
 
-1. Die Vorlage **AF–01 / Pressure-fed** öffnet ein Triebwerk mit 10 kN Zielschub, 30 bar Kammerdruck und O/F 2,6.
+1. Über **Vorlage** eine der drei Architekturen wählen. Alle starten mit 10 kN idealem Hauptschub, 30 bar Kammerdruck und O/F 2,6.
 2. Unter **Triebwerksentwurf** die Ziele bearbeiten. Auf dem Handy zwischen **Bauteile**, **System**, **Details** und **Ergebnisse** wechseln.
 3. Komponenten anklicken und ihre Parameter im Inspector ändern. Zum Verschieben am Bauteil ziehen; zum Verbinden zuerst einen Ausgangsport, dann einen Eingangsport anklicken.
 4. Die Oxidator- oder Brennstoff-Section öffnen, um deren Teile näher zu bearbeiten. Der Brotkrumenpfad führt zurück zum Gesamtsystem.
 5. **Berechnen** ausführen. Die Auswertung zeigt ideale Leistung, vorläufige Geometrie und erforderliche Versorgungsdrücke.
 6. Das Projekt mit **Speichern** als JSON-Datei sichern. **Öffnen** übernimmt die Datei auch auf einem anderen Gerät.
 
-Eine neue Komponente wird zunächst unverbunden angelegt. Zum Einfügen in einen Pfad die vorhandene Verbindung im Inspector trennen und beide neuen Verbindungen herstellen. **Rückgängig** stellt Änderungen wieder her. Grafisches Verschieben verändert die physische Leitungslänge nicht.
+Eine neue Fluidkomponente wird zunächst unverbunden angelegt. Im Inspector unter **In Versorgungspfad einsetzen** die passende Verbindung wählen und **In Leitung einsetzen** betätigen. Alternativ die vorhandene Verbindung trennen und beide neuen Verbindungen über die Ports herstellen. Pumpen und Turbinen erhalten zusätzlich im Feld **Antriebswelle** eine vorhandene Welle. Die mechanische Zuordnung ist keine Fluidleitung. **Rückgängig** stellt Änderungen wieder her. Grafisches Verschieben verändert die physische Leitungslänge nicht.
+
+## Die drei Vorlagen
+
+| Vorlage | Enthaltene Modelle |
+|---|---|
+| AF–01 / Pressure-fed | Zwei druckgeförderte Versorgungspfade mit Injektor, Kammer und Glockendüse |
+| AF–02 / Electric + Regen | Zwei Pumpen, gemeinsamer externer Wellenantrieb und ein Kühlblock mit vorgegebener Wärmeaufnahme |
+| AF–03 / Turbine drive | Pumpen, Welle, Kühlblock sowie separate Treibgasquelle, Turbine und Abgasdüse |
+
+Die dritte Vorlage ist kein vollständig geschlossener Gasgeneratorzyklus: Der Treibgaszustand und sein zusätzlicher Massenstrom werden separat vorgegeben. Das System-Isp berücksichtigt diesen zusätzlichen Verbrauch.
 
 ## Umfang
 
 - Zwei getrennte, unverzweigte Versorgungspfade bis zum Injektor; anschließend eine Kammer und eine Düse.
 - Versorgung, Leitung, einfaches Ventil und ideale Messstelle; definierte Verlustannahmen am Injektor.
+- Pumpen mit vorgegebener Druckerhöhung und Wellenzuordnung; Antrieb mit Leistung, Wirkungsgrad und Drehzahl.
+- Kühlblock mit vorgegebener Wärmeaufnahme, Druckverlust und Wärmekapazität.
+- Ein separater, unverzweigter Treibgaszweig von einer Gasquelle über eine Turbine zu einer Abgasdüse.
 - Zwei vorgegebene Sections: Oxidator und Brennstoff. Keine beliebig verschachtelte Subsystembibliothek.
 - Lokales Autosave, Projektdateien, Undo/Redo sowie CSV- und JSON-Ergebnisexport.
 - Berechnung in einem Browser-Worker. Entwurfsänderungen markieren bestehende Ergebnisse als veraltet.
 
-Die stationäre Rechnung ermittelt aus den Entwurfszielen die Massenströme und rechnet anschließend die benötigten Versorgungsdrücke rückwärts aus den Verlusten. Zu wenig verfügbarer Druck macht den Entwurf nicht erfüllbar. Eine Druckreserve bedeutet erforderliche Druckanpassung; sie ist kein automatisch gelöster realer Betriebspunkt.
+Die stationäre Rechnung ermittelt aus den Entwurfszielen die Hauptmassenströme und rechnet die benötigten Versorgungsdrücke aus Verlusten und Pumpendruckerhöhungen rückwärts. Zusätzlich wird der Pumpenleistungsbedarf je Welle gegen Turbinenleistung und externen Antrieb geprüft. Zu wenig Druck oder Wellenleistung macht den Zielentwurf nicht erfüllbar. Reserven bedeuten notwendige Anpassung; weder ein realer Betriebspunkt noch ein Drehzahlgleichgewicht werden automatisch gelöst.
+
+Die Hauptkennwerte bleiben die idealen Werte des Haupttriebwerks. Bei vorhandenem Treibgaszweig ergänzt die Cycle-Auswertung **Gesamtschub** und **System-Isp** aus Haupttriebwerk, Abgasdüse und gesamtem Massenverbrauch. Diese Größen dürfen nicht mit dem Haupttriebwerks-Isp verwechselt werden.
 
 ## Rechenmodelle und Grenzen
 
@@ -52,21 +69,24 @@ Die stationäre Rechnung ermittelt aus den Entwurfszielen die Massenströme und 
 | Datenbereich | Kammerdruck 10–80 bar, O/F 2,0–3,2, Expansion 4–40 |
 | RP-1-Versorgung | Konstante Screeningwerte: Dichte 810 kg/m³, dynamische Viskosität 0,0018 Pa·s; Temperatur 288–303 K |
 | LOX-Versorgung | Konstante Screeningwerte: Dichte 1.140 kg/m³, dynamische Viskosität 0,0002 Pa·s; Temperatur 85–95 K |
-| Versorgungstemperatur | Vorgegebene isotherme Annahme; keine gelöste Erwärmung und keine Kopplung der editierbaren Versorgungstemperatur an die CEA-Thermochemie |
+| Versorgungstemperatur | Ohne Kühlblock isotherme Annahme; ein Kühlblock erhöht die Temperatur aus vorgegebener Wärmeaufnahme und konstantem cp. Keine Kopplung an die CEA-Thermochemie |
+| Pumpe | Inkompressible Druckarbeit mit vorgegebener Druckerhöhung und Wirkungsgrad; keine Kennlinie oder Kavitation |
+| Welle | Pumpenbedarf gegen Turbinenleistung nach mechanischem Wirkungsgrad plus externe, bereits an der Welle verfügbare Leistung; Drehmoment aus vorgegebener Drehzahl |
+| Kühlblock | Vorgegebener Wärmestrom, Druckverlust und cp; keine Kanal- oder Wandtemperaturauslegung, keine temperaturabhängigen Stoffwerte |
+| Turbine | Idealgas-Expansion bei konstantem cp und γ sowie vorgegebenen Ein-/Austrittsdrücken und Wirkungsgrad |
+| Abgasdüse | Zusätzlicher Impuls- und Druckschub aus dem separaten Treibgasstrom; keine optimierte Kontur oder Ablösung |
 | Geometrie | Vorläufige Kammer-/Düsenkontur mit glatter kubischer Glockenapproximation; keine validierte Rao-Auslegung |
 
-Lite enthält keinen allgemeinen Netzsolver, keine Pumpen-/Turbinenzyklen, Transienten, reale Off-design-Lösung, Detailkühlung, Struktur- oder Lebensdauernachweise. Die Ergebnisse dienen dem Vorentwurf und sind keine Zertifizierung oder Freigabe zur Fertigung beziehungsweise Erprobung.
+Lite enthält keinen allgemeinen Netzsolver, keinen vollständigen Gasgenerator-/Expander-/Staged-Combustion-Abschluss, keine Transienten, reale Off-design-Lösung, Detailkühlung, Struktur- oder Lebensdauernachweise. Die Ergebnisse dienen dem Vorentwurf und sind keine Zertifizierung oder Freigabe zur Fertigung beziehungsweise Erprobung.
 
 ## Speicherung und Offline-Nutzung
 
 Autosave bleibt im Browserspeicher dieses Geräts. Browserdaten löschen oder ein anderes Browserprofil verwenden kann diesen Stand entfernen. Eine gespeicherte Projektdatei ist der vorgesehene Weg für Sicherung und Gerätewechsel. Ergebnisexporte beziehen sich auf den berechneten Stand; nach einer Änderung zuerst neu rechnen.
 
-Ein lokaler Offline-Test wurde bestanden: Nach Abschalten des Entwicklungsservers ließ sich die Anwendung aus dem Browsercache neu laden und erneut berechnen. Das belegt nicht automatisch das Offlineverhalten der privaten Hosting-Anmeldung.
+Die Anwendung enthält ein Manifest und einen Service Worker. Nach einem vollständigen Laden in einem unterstützten sicheren Kontext können Anwendungsdateien zwischengespeichert werden. Browserinstallation und Offlineverhalten hängen vom Zugriffsweg ab. Der Android-LAN-Zugriff über HTTP benötigt weiterhin den laufenden Server. Den tatsächlich verwendeten Vorführweg daher vor Ort prüfen.
 
-Die Anwendung enthält ein Manifest und einen Service Worker. Nach einem vollständigen Laden in einem unterstützten sicheren Kontext können die Anwendungsdateien zwischengespeichert werden. Die Installation über das Browsermenü hängt vom Browser ab. Privates Hosting kann für Anmeldung und Zugriff weiterhin Internet benötigen; die Vorführung daher vor Ort auf dem tatsächlich eingesetzten Gerät prüfen.
-
-Der Browserablauf wurde mit 1.440 × 900 Pixeln und einer mobilen Emulation mit 390 × 844 Pixeln geprüft: Unterversorgung, veraltete Ergebnisse, Fehler bei geschlossenem Ventil, Undo, Section-Navigation sowie Trennen und Wiederverbinden. Dabei wurden keine Konsolenfehler beobachtet. Ein physisches Android-Handy wurde nicht getestet. Für die STE empfiehlt sich die [fünfminütige Vorführung](DEMO.md) mit einem zuvor geladenen und gespeicherten Referenzprojekt.
+Der bisherige 2.0-Stand wurde auf Desktop und in mobiler Browseremulation sowie lokal offline geprüft. Diese Nachweise sind nicht automatisch eine Abnahme aller neuen 2.1-Cycle-Funktionen. Ein physisches Android-Handy wurde bisher nicht getestet. Aktuelle Prüfstände stehen in `VALIDATION.md`; der [Vorführablauf](DEMO.md) erklärt die neuen Komponentenmodelle.
 
 ## Prüfnachweise
 
-31 automatisierte Tests für Rechenkern, Graph-Hilfen, Import, Verlauf und Integration bestanden. Zusätzlich wurden 252 CEA-Zellmittelpunkte gegen direkte Backend-Rechnungen geprüft; größte beobachtete Abweichungen: c* 0,184 %, Cf 0,429 %, Tc 0,464 %, Austrittsdruck 0,650 %. Dies sind Stichprobenwerte, keine globale Fehlergrenze oder experimentelle Validierung. Der Windows-Starter wurde als Python-Programm und als gebündelte EXE im Smoke-Test geprüft. Details in `VALIDATION.md`.
+Automatisierte Tests laufen mit `npm test`. Den tatsächlichen Umfang und Status der numerischen, Browser- und Paketprüfungen dokumentiert `VALIDATION.md`. CEA-Vergleichsstichproben sind keine globale Fehlergrenze oder experimentelle Validierung; der zusätzliche Cycle-Umfang benötigt eigene Nachweise.

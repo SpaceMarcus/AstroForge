@@ -1,6 +1,6 @@
 /** Bounded ideal predesign, not a transient or general network solver. */
 const G0 = 9.80665;
-const TYPES = new Set(['source','line','valve','injector','chamber','nozzle','sensor']);
+const TYPES = new Set(['source','line','valve','injector','chamber','nozzle','sensor','pump','regen','shaft','gasSource','turbine','exhaust']);
 const FLUIDS = {
   fuel:{rho:810,mu:1.8e-3,tMin:288,tMax:303,label:'RP-1: konstante Screeningwerte (ρ=810 kg/m³, μ=1,8 mPa·s)'},
   ox:{rho:1140,mu:2e-4,tMin:85,tMax:95,label:'LOX: konstante Screeningwerte (ρ=1140 kg/m³, μ=0,2 mPa·s)'}
@@ -48,10 +48,13 @@ function inspectGraph(project,errors) {
   for(const n of nodes){
     if(!n||typeof n.id!=='string'||!n.id||map.has(n.id)){error(n,'Bauteil-IDs fehlen oder sind doppelt.');continue;}
     if(!TYPES.has(n.type))error(n,'Dieser Bauteiltyp wird in Lite nicht unterstützt.');
-    if(!['fuel','ox','gas'].includes(n.medium))error(n,'Medium fehlt oder ist ungültig.');
+    if(!['fuel','ox','gas','mechanical'].includes(n.medium))error(n,'Medium fehlt oder ist ungültig.');
     if(!n.params||typeof n.params!=='object')error(n,'Bauteilparameter fehlen.');
     if(n.section!=null && !['fuel','ox'].includes(n.section))error(n,'Unbekannte Section.');
-    if(n.section && (n.medium!==n.section || !['line','valve','sensor'].includes(n.type)))error(n,'Section und Bauteilmedium passen nicht zusammen.');
+    if(n.section && (n.medium!==n.section || !['line','valve','sensor','pump','regen'].includes(n.type)))error(n,'Section und Bauteilmedium passen nicht zusammen.');
+    if(n.type==='shaft'&&n.medium!=='mechanical')error(n,'Eine Welle benötigt das Medium mechanical.');
+    if(n.medium==='mechanical'&&n.type!=='shaft')error(n,'Nur Wellen dürfen mechanische Knoten sein.');
+    if(n.type==='regen'&&n.medium!=='fuel')error(n,'Das Kühlungsscreening ist nur im Brennstoffpfad verfügbar.');
     map.set(n.id,n);incoming.set(n.id,[]);outgoing.set(n.id,[]);
   }
   const edgeIds=new Set(),pairs=new Set();
@@ -72,25 +75,37 @@ function inspectGraph(project,errors) {
   for(const n of nodes){
     if(!map.has(n?.id))continue;
     const inc=incoming.get(n.id).length,out=outgoing.get(n.id).length;
-    const expectedIn=n.type==='source'?0:n.type==='injector'?2:1,expectedOut=n.type==='nozzle'?0:1;
+    const expectedIn=['source','gasSource','shaft'].includes(n.type)?0:n.type==='injector'?2:1,expectedOut=['nozzle','exhaust','shaft'].includes(n.type)?0:1;
     if(inc!==expectedIn||out!==expectedOut)error(n,'Offene Anschlüsse oder Verzweigung: Lite benötigt zwei unverzweigte Versorgungspfade.');
-    if(['injector','chamber','nozzle'].includes(n.type)&&n.medium!=='gas')error(n,'Dieses Bauteil benötigt das Medium Heißgas.');
+    if(['injector','chamber','nozzle','gasSource','turbine','exhaust'].includes(n.type)&&n.medium!=='gas')error(n,'Dieses Bauteil benötigt das Medium Heißgas.');
   }
   if(errors.length)return null;
   if(outgoing.get(singles.injector.id)[0]!==singles.chamber.id||outgoing.get(singles.chamber.id)[0]!==singles.nozzle.id){errors.push({message:'Injektor, Kammer und Düse müssen direkt aufeinander folgen.'});return null;}
-  const visited=new Set([singles.injector.id,singles.chamber.id,singles.nozzle.id]),paths={};
+  const shafts=nodes.filter(n=>n.type==='shaft');
+  const linked=nodes.filter(n=>['pump','turbine'].includes(n.type));
+  for(const node of linked)if(!shafts.some(s=>s.id===node.params.shaftId))error(node,'Pumpe/Turbine benötigt eine gültige Wellenzuordnung.');
+  for(const shaft of shafts)if(!linked.some(n=>n.params.shaftId===shaft.id))error(shaft,'Welle ist keiner Pumpe oder Turbine zugeordnet.');
+  const visited=new Set([singles.injector.id,singles.chamber.id,singles.nozzle.id,...shafts.map(n=>n.id)]),paths={};
   for(const medium of ['fuel','ox']){
     const path=[],seen=new Set();let node=sources[medium];
     while(node.id!==singles.injector.id){
       if(seen.has(node.id)||visited.has(node.id)){error(node,'Schleife oder zusammengeführte Fluidpfade sind nicht unterstützt.');break;}
-      if(node.medium!==medium||!['source','line','valve','sensor'].includes(node.type)){error(node,'Brennstoff- und Oxidatorpfad müssen bis zum Injektor getrennt bleiben.');break;}
+      if(node.medium!==medium||!['source','line','valve','sensor','pump','regen'].includes(node.type)){error(node,'Brennstoff- und Oxidatorpfad müssen bis zum Injektor getrennt bleiben.');break;}
       seen.add(node.id);visited.add(node.id);path.push(node);node=map.get(outgoing.get(node.id)[0]);
     }
     if(!path.some(n=>n.type==='line'))error(sources[medium],'Jeder Versorgungspfad benötigt mindestens eine Leitung als hydraulische Querschnittsreferenz.');
     paths[medium]=path;
   }
+  let auxiliary=null;
+  const auxNodes=nodes.filter(n=>['gasSource','turbine','exhaust'].includes(n.type));
+  if(auxNodes.length){
+    const gasSource=auxNodes.filter(n=>n.type==='gasSource'),turbines=auxNodes.filter(n=>n.type==='turbine'),exhausts=auxNodes.filter(n=>n.type==='exhaust');
+    if(gasSource.length!==1||turbines.length!==1||exhausts.length!==1)errors.push({message:'Zusatzgas benötigt genau eine Gasquelle, eine Turbine und eine Abgasdüse.'});
+    else if(outgoing.get(gasSource[0].id)[0]!==turbines[0].id||outgoing.get(turbines[0].id)[0]!==exhausts[0].id)errors.push({message:'Zusatzgas muss getrennt als Gasquelle → Turbine → Abgasdüse verbunden sein.'});
+    else{auxiliary={source:gasSource[0],turbine:turbines[0],exhaust:exhausts[0]};auxNodes.forEach(n=>visited.add(n.id));}
+  }
   if(visited.size!==nodes.length)errors.push({message:'Nicht angeschlossene Bauteile oder eine isolierte Schleife im Systemplan.'});
-  return errors.length?null:{...singles,sources,paths};
+  return errors.length?null:{...singles,sources,paths,shafts,auxiliary};
 }
 
 function validateNumber(value,min,max,label,node,errors){
@@ -110,10 +125,12 @@ function geometryFor(design,area){
   return {throatRadiusM:rt,exitRadiusM:re,chamberRadiusM:rc,chamberLengthM:chamberLength,nozzleLengthM:nozzleLength,contour};
 }
 
-function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings){
-  const source=path[0],fluid=FLUIDS[medium],stations={},drops=new Map();
+function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle){
+  const source=path[0],fluid=FLUIDS[medium],stations={},drops=new Map(),temperatures=new Map();
+  let temperature=source.params.temperatureK;
   const firstLine=path.find(n=>n.type==='line');let boreMm=firstLine.params.diameterMm;
   for(const node of path){
+    temperatures.set(node.id,temperature);
     let drop=0;
     if(node.type==='line'||node.type==='valve'){
       if(node.type==='line')boreMm=node.params.diameterMm;
@@ -129,16 +146,88 @@ function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings){
       if(velocity>100)errors.push({nodeId:node.id,message:'Strömungsgeschwindigkeit über 100 m/s: außerhalb des Lite-Screeningbereichs.'});
       if(!Number.isFinite(drop))errors.push({nodeId:node.id,message:'Druckverlust nicht endlich; Leitungsparameter prüfen.'});
     }
+    if(node.type==='pump'){
+      drop=-node.params.riseBar;
+      const hydraulicPowerKW=mdot*node.params.riseBar*1e5/fluid.rho/1000;
+      cycle.pumps.push({nodeId:node.id,shaftId:node.params.shaftId,pressureRiseBar:node.params.riseBar,hydraulicPowerKW,shaftPowerKW:hydraulicPowerKW/node.params.efficiency,massFlowKgS:mdot});
+    }
+    if(node.type==='regen'){
+      drop=node.params.dropBar;
+      const outletTemperature=temperature+node.params.heatKW*1000/(mdot*node.params.cpJkgK);
+      cycle.cooling.push({nodeId:node.id,heatKW:node.params.heatKW,dropBar:drop,cpJkgK:node.params.cpJkgK,inletTemperatureK:temperature,outletTemperatureK:outletTemperature,massFlowKgS:mdot});
+      if(outletTemperature>650)errors.push({nodeId:node.id,message:'Kühlmittel über 650 K: außerhalb des begrenzten Wärmebilanz-Screenings.'});
+      temperature=outletTemperature;
+    }
     drops.set(node.id,drop);
   }
   let pressure=pcBar+injectorDrop;
   for(const node of [...path].reverse()){
     const drop=drops.get(node.id);pressure+=drop;
-    stations[node.id]={pressureBar:pressure,temperatureK:source.params.temperatureK,massFlowKgS:mdot,dropBar:drop};
+    if(pressure<=0)errors.push({nodeId:node.id,message:'Nicht positives Druckbudget: feste Pumpendruckerhöhung überbestimmt diesen Zielentwurf. Druckerhöhung reduzieren.'});
+    stations[node.id]={pressureBar:pressure,temperatureK:temperatures.get(node.id),massFlowKgS:mdot,dropBar:drop};
   }
   const feed={requiredBar:pressure,availableBar:source.params.pressureBar,marginBar:source.params.pressureBar-pressure,massFlowKgS:mdot};
   if(feed.marginBar<0)warnings.push(`${medium==='fuel'?'Brennstoff':'Oxidator'}: verfügbarer Versorgungsdruck reicht für den Zielbetriebspunkt nicht aus.`);
   return {feed,stations};
+}
+
+function validateExtended(graph,design,errors){
+  const check=(node,key,min,max,label=key)=>validateNumber(node.params[key],min,max,label,node,errors);
+  for(const path of Object.values(graph.paths))for(const n of path){
+    if(n.type==='pump'){check(n,'riseBar',.01,150,'Pumpendruckerhöhung [bar]');check(n,'efficiency',.05,1,'Pumpenwirkungsgrad');}
+    if(n.type==='regen'){check(n,'heatKW',0,5000,'Aufgeprägte Wärme [kW]');check(n,'dropBar',0,100,'Kühldruckverlust [bar]');check(n,'cpJkgK',100,10000,'Kühlmittel-cp [J/(kg K)]');}
+  }
+  for(const n of graph.shafts){check(n,'efficiency',.05,1,'Mechanischer Wirkungsgrad');check(n,'rpm',100,200000,'Drehzahl [rpm]');check(n,'motorKW',0,10000,'Antriebsleistung an der Welle [kW]');}
+  if(graph.auxiliary){
+    const {source:s,turbine:t,exhaust:e}=graph.auxiliary;
+    check(s,'pressureBar',.1,200,'Treibgas-Gesamtdruck [bar]');check(s,'temperatureK',200,2000,'Treibgas-Gesamttemperatur [K]');check(s,'massFlowKgS',.001,10,'Zusatzgas-Massenstrom [kg/s]');check(s,'cpJkgK',500,10000,'Treibgas-cp [J/(kg K)]');check(s,'gamma',1.05,1.67,'Treibgas-gamma');
+    check(t,'outletBar',.01,200,'Turbinen-Austrittsgesamtdruck [bar]');check(t,'efficiency',.05,1,'Turbinenwirkungsgrad');check(e,'exitBar',.001,200,'Abgas-Austrittsdruck [bar]');check(e,'efficiency',.05,1,'Düsenwirkungsgrad');
+    if(!(s.params.pressureBar>t.params.outletBar&&t.params.outletBar>e.params.exitBar))errors.push({nodeId:t.id,message:'Zusatzgas benötigt Quelle > Turbinenaustritt > Düsen-Austrittsdruck.'});
+    if(t.params.outletBar<=design.paBar)errors.push({nodeId:e.id,message:'Abgasdüse benötigt einen Eintrittsgesamtdruck oberhalb des Umgebungsdrucks.'});
+  }
+}
+
+function evaluateCycle(graph,design,mdot,cycle,warnings,errors){
+  const stations={};
+  // NASA power-turbine/nozzle energy relations; constant cp and gamma.
+  // https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html
+  // https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html
+  if(graph.auxiliary){
+    const {source:s,turbine:t,exhaust:e}=graph.auxiliary,sp=s.params,tp=t.params,ep=e.params;
+    const exponent=(sp.gamma-1)/sp.gamma;
+    const turbineDeltaT=tp.efficiency*sp.temperatureK*(1-(tp.outletBar/sp.pressureBar)**exponent);
+    const outletTemperatureK=sp.temperatureK-turbineDeltaT;
+    const powerKW=sp.massFlowKgS*sp.cpJkgK*turbineDeltaT/1000;
+    cycle.turbines.push({nodeId:t.id,shaftId:tp.shaftId,inletPressureBar:sp.pressureBar,outletPressureBar:tp.outletBar,inletTemperatureK:sp.temperatureK,outletTemperatureK,massFlowKgS:sp.massFlowKgS,powerKW});
+    const nozzleDeltaT=ep.efficiency*outletTemperatureK*(1-(ep.exitBar/tp.outletBar)**exponent);
+    const exitTemperatureK=outletTemperatureK-nozzleDeltaT;
+    const exitVelocityMS=Math.sqrt(2*sp.cpJkgK*nozzleDeltaT);
+    const gasConstant=sp.cpJkgK*(sp.gamma-1)/sp.gamma;
+    const exitDensity=ep.exitBar*1e5/(gasConstant*exitTemperatureK);
+    const exitAreaM2=sp.massFlowKgS/(exitDensity*exitVelocityMS);
+    const thrustN=sp.massFlowKgS*exitVelocityMS+(ep.exitBar-design.paBar)*1e5*exitAreaM2;
+    if(!Number.isFinite(thrustN)||thrustN<0)errors.push({nodeId:e.id,message:'Abgasdüsenmodell ergibt keinen gültigen positiven Schub. Druckverhältnis prüfen.'});
+    const totalMassFlowKgS=mdot+sp.massFlowKgS,systemThrustN=design.thrustN+thrustN;
+    cycle.auxiliary={sourceId:s.id,turbineId:t.id,exhaustId:e.id,massFlowKgS:sp.massFlowKgS,exitPressureBar:ep.exitBar,exitTemperatureK,exitVelocityMS,exitAreaM2,thrustN,systemThrustN,totalMassFlowKgS,systemIspS:systemThrustN/(totalMassFlowKgS*G0)};
+    stations[s.id]={pressureBar:sp.pressureBar,temperatureK:sp.temperatureK,massFlowKgS:sp.massFlowKgS,dropBar:0};
+    stations[t.id]={pressureBar:sp.pressureBar,temperatureK:sp.temperatureK,massFlowKgS:sp.massFlowKgS,dropBar:sp.pressureBar-tp.outletBar};
+    stations[e.id]={pressureBar:ep.exitBar,temperatureK:exitTemperatureK,massFlowKgS:sp.massFlowKgS,dropBar:null};
+    warnings.push('Treibgas ist eine separat versorgte Randbedingung: kein Gasgenerator, keine Treibstoffabzweigung und keine Preburnerchemie. Der zusätzliche Gasverbrauch wird nur im System-Isp berücksichtigt.');
+    warnings.push('Turbine/Abgasdüse: kalorisch ideales Gas mit konstantem cp und gamma; axial gleichgerichteter Zusatzschub, Austrittsfläche aus Kontinuität dimensioniert. Keine Kennfeld-, Abströmwinkel- oder Ablösungsrechnung.');
+    if(ep.exitBar<design.paBar)warnings.push('Abgasdüse überexpandiert: Druckschub enthalten, anliegende Strömung angenommen.');
+  }
+  for(const shaft of graph.shafts){
+    const p=shaft.params,requiredPowerKW=cycle.pumps.filter(n=>n.shaftId===shaft.id).reduce((sum,n)=>sum+n.shaftPowerKW,0);
+    const turbinePowerKW=cycle.turbines.filter(n=>n.shaftId===shaft.id).reduce((sum,n)=>sum+n.powerKW,0);
+    const availablePowerKW=p.motorKW+turbinePowerKW*p.efficiency,balanceKW=availablePowerKW-requiredPowerKW;
+    const omega=p.rpm*2*Math.PI/60,feasible=balanceKW>=-1e-9;
+    cycle.shafts.push({nodeId:shaft.id,rpm:p.rpm,efficiency:p.efficiency,motorKW:p.motorKW,turbinePowerKW,availablePowerKW,requiredPowerKW,balanceKW,requiredTorqueNm:requiredPowerKW*1000/omega,availableTorqueNm:availablePowerKW*1000/omega,feasible});
+    if(!feasible)warnings.push(`${shaft.label||shaft.id}: Wellenleistung reicht für die vorgegebene Pumpenarbeit nicht aus. Zielbetriebspunkt ist damit nicht erfüllbar.`);
+  }
+  if(cycle.pumps.length)warnings.push('Pumpen: inkompressible Druckarbeit ṁ·Δp/(ρ·η), feste Druckerhöhung. Kein Kennfeld, NPSH-/Kavitationsnachweis oder Drehzahl-Betriebspunkt; keine Pumpenerwärmung.');
+  if(cycle.shafts.length)warnings.push('Wellenbilanz ist ein Leistungsbudget bei vorgegebener Drehzahl, keine automatisch geschlossene Drehmomentgleichung. Motorleistung gilt bereits an der Welle; mechanischer Wirkungsgrad wirkt auf Turbinenleistung.');
+  if(cycle.cooling.length)warnings.push('Regenerativblock: aufgeprägte Wärme mit ΔT=Q/(ṁ·cp) und vorgegebenem Druckverlust. Keine Wandtemperatur, Kanalgeometrie oder thermische Freigabe; Fluidwerte bleiben trotz Erwärmung konstant. Die Wärmequelle ist extern aufgeprägt, ohne Energieabschluss mit Brennkammer oder Hauptdüse.');
+  return stations;
 }
 
 export function solveProject(project,data){
@@ -175,24 +264,27 @@ export function solveProject(project,data){
   }
   validateNumber(graph.injector.params.fuelDropBar,0,100,'Injektorverlust Brennstoff [bar]',graph.injector,errors);
   validateNumber(graph.injector.params.oxDropBar,0,100,'Injektorverlust Oxidator [bar]',graph.injector,errors);
+  validateExtended(graph,design,errors);
   if(errors.length)return {ok:false,errors,warnings};
   const cf=thermo.cfVac-design.paBar/design.pcBar*design.eps;
   if(cf<=0)return {ok:false,errors:[{message:'Kein positiver idealer Schubkoeffizient für diese Randbedingungen.'}],warnings};
   const area=design.thrustN/(cf*design.pcBar*1e5),mdot=design.pcBar*1e5*area/thermo.cstarMS;
   const fuel=mdot/(1+design.of),ox=mdot-fuel;
-  const fuelResult=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,errors,warnings);
-  const oxResult=evaluateFeed(graph.paths.ox,'ox',ox,design.pcBar,graph.injector.params.oxDropBar,errors,warnings);
+  const cycle={pumps:[],cooling:[],turbines:[],shafts:[]};
+  const fuelResult=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,errors,warnings,cycle);
+  const oxResult=evaluateFeed(graph.paths.ox,'ox',ox,design.pcBar,graph.injector.params.oxDropBar,errors,warnings,cycle);
+  const auxiliaryStations=evaluateCycle(graph,design,mdot,cycle,warnings,errors);
   if(errors.length)return {ok:false,errors,warnings};
   warnings.push('Idealer Vorentwurf: keine Verbrennungs-, Reibungs- oder Divergenzverluste; kein thermischer oder struktureller Nachweis.');
-  warnings.push('Versorgung isotherm mit konstanten Stoffwerten; Pfaddrücke sind erforderliche Gesamtdruckbudgets am Zielbetriebspunkt, keine gelösten lokalen statischen Istdrücke. Höhenunterschiede werden nicht berücksichtigt.');
+  warnings.push('Versorgung mit konstanten Stoffwerten, außerhalb eines Kühlblocks isotherm; Pfaddrücke sind erforderliche Gesamtdruckbudgets am Zielbetriebspunkt, keine gelösten lokalen statischen Istdrücke. Höhenunterschiede werden nicht berücksichtigt.');
   warnings.push('CEA-Reaktanten: RP-1 bei 298,15 K und LOX bei 90,18 K. Die einstellbaren Versorgungstemperaturen sind nicht an die CEA-Thermochemie gekoppelt.');
   warnings.push(FLUIDS.fuel.label+'; '+FLUIDS.ox.label+'.');
   warnings.push('Ventilquerschnitt = Querschnitt der vorangehenden Leitung (ohne Vorgänger: erste Leitung im Pfad).');
   warnings.push('2D-Glockenkontur: glatte kubische Visualisierungsnäherung, keine Rao-/MoC-Auslegung. L* bezieht sich hier auf das zylindrische Kammervolumen.');
   if(design.paBar>thermo.peBar)warnings.push('Überexpandierte Düse: ideale anliegende Strömung angenommen; Ablösung wird in Lite nicht berechnet.');
-  return {ok:true,errors,warnings,
+  return {ok:true,errors,warnings,cycle,
     performance:{thrustN:design.thrustN,ispS:cf*thermo.cstarMS/G0,cstarMS:thermo.cstarMS,tcK:thermo.tcK,mdotKgS:mdot,fuelKgS:fuel,oxKgS:ox,cf},
     geometry:geometryFor(design,area),feeds:{fuel:fuelResult.feed,ox:oxResult.feed},
-    stations:{...fuelResult.stations,...oxResult.stations,[graph.injector.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:null,fuelDropBar:graph.injector.params.fuelDropBar,oxDropBar:graph.injector.params.oxDropBar},[graph.chamber.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:0},[graph.nozzle.id]:{pressureBar:thermo.peBar,temperatureK:null,massFlowKgS:mdot,dropBar:null}},
-    meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,domain:'LOX/RP-1 · Gleichgewicht · pc 10–80 bar · O/F 2–3,2 · ε 4–40 · CEA-Interpolation ohne Extrapolation',interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:'Darcy–Weisbach / Haaland, konstante Stoffwerte',pressureBasis:'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation'}};
+    stations:{...fuelResult.stations,...oxResult.stations,...auxiliaryStations,[graph.injector.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:null,fuelDropBar:graph.injector.params.fuelDropBar,oxDropBar:graph.injector.params.oxDropBar},[graph.chamber.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:0},[graph.nozzle.id]:{pressureBar:thermo.peBar,temperatureK:null,massFlowKgS:mdot,dropBar:null}},
+    meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,domain:'LOX/RP-1 · Gleichgewicht · pc 10–80 bar · O/F 2–3,2 · ε 4–40 · CEA-Interpolation ohne Extrapolation',interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:'Darcy–Weisbach / Haaland, konstante Stoffwerte',pressureBasis:'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation',formulaSources:[{model:'Pump power',url:'https://www.energy.gov/sites/default/files/2014/05/f16/pump.pdf'},{model:'Ideal-gas turbine work',url:'https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html'},{model:'Nozzle expansion',url:'https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html'},{model:'Thrust and specific impulse',url:'https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/'}]}};
 }

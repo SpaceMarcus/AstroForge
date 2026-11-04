@@ -1,0 +1,245 @@
+{
+  "format": "astroforge-lite",
+  "version": 1,
+  "name": "AF–02 / Electric + Regen",
+  "design": {
+    "thrustN": 10000,
+    "pcBar": 30,
+    "of": 2.6,
+    "eps": 12,
+    "paBar": 1.01325,
+    "lstarM": 1.1,
+    "contractionRatio": 3
+  },
+  "nodes": [
+    {
+      "id": "ox-source",
+      "type": "source",
+      "label": "LOX Versorgung",
+      "medium": "ox",
+      "section": null,
+      "x": 40,
+      "y": 90,
+      "params": {
+        "pressureBar": 15,
+        "temperatureK": 90
+      }
+    },
+    {
+      "id": "ox-line",
+      "type": "line",
+      "label": "OX · Feed line",
+      "medium": "ox",
+      "section": "ox",
+      "x": 260,
+      "y": 90,
+      "params": {
+        "lengthM": 1.2,
+        "diameterMm": 22,
+        "roughnessMm": 0.01,
+        "k": 0.5
+      }
+    },
+    {
+      "id": "ox-valve",
+      "type": "valve",
+      "label": "OX · Main valve",
+      "medium": "ox",
+      "section": "ox",
+      "x": 710,
+      "y": 90,
+      "params": {
+        "k": 2,
+        "open": true
+      }
+    },
+    {
+      "id": "fuel-source",
+      "type": "source",
+      "label": "RP-1 Versorgung",
+      "medium": "fuel",
+      "section": null,
+      "x": 40,
+      "y": 350,
+      "params": {
+        "pressureBar": 15,
+        "temperatureK": 293.15
+      }
+    },
+    {
+      "id": "fuel-line",
+      "type": "line",
+      "label": "FU · Feed line",
+      "medium": "fuel",
+      "section": "fuel",
+      "x": 260,
+      "y": 350,
+      "params": {
+        "lengthM": 1.2,
+        "diameterMm": 18,
+        "roughnessMm": 0.01,
+        "k": 0.5
+      }
+    },
+    {
+      "id": "fuel-valve",
+      "type": "valve",
+      "label": "FU · Main valve",
+      "medium": "fuel",
+      "section": "fuel",
+      "x": 710,
+      "y": 350,
+      "params": {
+        "k": 2,
+        "open": true
+      }
+    },
+    {
+      "id": "injector",
+      "type": "injector",
+      "label": "Injektorkopf",
+      "medium": "gas",
+      "section": null,
+      "x": 1160,
+      "y": 220,
+      "params": {
+        "fuelDropBar": 6,
+        "oxDropBar": 6
+      }
+    },
+    {
+      "id": "chamber",
+      "type": "chamber",
+      "label": "Brennkammer",
+      "medium": "gas",
+      "section": null,
+      "x": 1380,
+      "y": 220,
+      "params": {}
+    },
+    {
+      "id": "nozzle",
+      "type": "nozzle",
+      "label": "Bell nozzle",
+      "medium": "gas",
+      "section": null,
+      "x": 1600,
+      "y": 220,
+      "params": {}
+    },
+    {
+      "id": "drive",
+      "type": "shaft",
+      "label": "Elektrischer Antrieb",
+      "medium": "mechanical",
+      "section": null,
+      "x": 490,
+      "y": -170,
+      "params": {
+        "efficiency": 0.96,
+        "rpm": 30000,
+        "motorKW": 30
+      }
+    },
+    {
+      "id": "fuel-pump",
+      "type": "pump",
+      "label": "RP-1 Pumpe",
+      "medium": "fuel",
+      "section": "fuel",
+      "x": 480,
+      "y": 350,
+      "params": {
+        "riseBar": 30,
+        "efficiency": 0.7,
+        "shaftId": "drive"
+      }
+    },
+    {
+      "id": "ox-pump",
+      "type": "pump",
+      "label": "LOX Pumpe",
+      "medium": "ox",
+      "section": "ox",
+      "x": 480,
+      "y": 90,
+      "params": {
+        "riseBar": 30,
+        "efficiency": 0.7,
+        "shaftId": "drive"
+      }
+    },
+    {
+      "id": "regen",
+      "type": "regen",
+      "label": "Kühlmantel · Wärmebilanz",
+      "medium": "fuel",
+      "section": "fuel",
+      "x": 930,
+      "y": 350,
+      "params": {
+        "heatKW": 50,
+        "dropBar": 3,
+        "cpJkgK": 2200
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "from": "ox-source",
+      "to": "ox-line"
+    },
+    {
+      "id": "e2",
+      "from": "ox-valve",
+      "to": "injector"
+    },
+    {
+      "id": "e3",
+      "from": "fuel-source",
+      "to": "fuel-line"
+    },
+    {
+      "id": "e6",
+      "from": "injector",
+      "to": "chamber"
+    },
+    {
+      "id": "e7",
+      "from": "chamber",
+      "to": "nozzle"
+    },
+    {
+      "id": "fuel-line-to-fuel-pump",
+      "from": "fuel-line",
+      "to": "fuel-pump"
+    },
+    {
+      "id": "fuel-pump-to-fuel-valve",
+      "from": "fuel-pump",
+      "to": "fuel-valve"
+    },
+    {
+      "id": "ox-line-to-ox-pump",
+      "from": "ox-line",
+      "to": "ox-pump"
+    },
+    {
+      "id": "ox-pump-to-ox-valve",
+      "from": "ox-pump",
+      "to": "ox-valve"
+    },
+    {
+      "id": "fuel-valve-to-regen",
+      "from": "fuel-valve",
+      "to": "regen"
+    },
+    {
+      "id": "regen-to-injector",
+      "from": "regen",
+      "to": "injector"
+    }
+  ],
+  "updatedAt": "2026-11-04T15:36:45.746Z"
+}

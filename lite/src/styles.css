@@ -473,3 +473,74 @@ input[aria-invalid="true"] { border-color: var(--red); background: #291e1d; }
   .results-strip { display: flex !important; color: #111; background: #fff; }
   .app-header { color: #111; background: #fff; }
 }
+
+/* Component-cycle extension: a compact mechanical ledger, not a second dashboard. */
+:root { --mechanical: #bea2eb; --mechanical-dim: #332b43; }
+.mechanical, .legend-dot.mechanical, .legend-dot.shaft { color: var(--mechanical); }
+.legend-dot.mechanical, .legend-dot.shaft { border-radius: 1px; transform: rotate(45deg); }
+.cycle-results { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line); }
+.cycle-results > .eyebrow { color: var(--mechanical); margin-bottom: 8px; }
+.cycle-results > h2 { margin: 0 0 9px; }
+.cycle-results > .help-text { margin: 0 0 18px; }
+.cycle-ledger { margin: 18px 0; border: 1px solid #494053; border-radius: 6px; overflow: hidden; background: #15191e; }
+.cycle-ledger-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 15px; border-bottom: 1px solid #3c3444; background: #24212b; }
+.cycle-ledger-heading h3 { margin: 0; color: #d1bee9; font-size: 12px; font-weight: 550; }
+.cycle-ledger-heading .badge { font-size: 9px; }
+.cycle-ledger-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; padding: 11px 15px; border-bottom: 1px solid var(--line-soft); align-items: baseline; }
+.cycle-ledger-row:last-child { border-bottom: 0; }
+.cycle-ledger-row > span { color: var(--muted); font-size: 11px; }
+.cycle-ledger-row > strong { font-family: var(--mono); font-size: 13px; font-weight: 450; white-space: nowrap; }
+.cycle-ledger-row > small { grid-column: 1 / -1; color: var(--quiet); font-size: 10px; line-height: 1.5; }
+.cycle-ledger-row.balance { background: #1e2429; }
+.cycle-ledger-row.balance > span { color: var(--text); }
+.cycle-ledger-row.balance > strong { font-size: 16px; }
+.cycle-power-bar { display: flex; width: 100%; height: 6px; background: #38414a; border-radius: 2px; overflow: hidden; margin-top: 7px; }
+.cycle-power-bar > span { display: block; min-width: 0; max-width: 100%; height: 100%; background: var(--mechanical); }
+.cycle-power-bar > span.demand { background: var(--accent); }
+.cycle-component-list { display: grid; gap: 12px; margin: 18px 0; }
+.cycle-component { border: 1px solid var(--line); border-radius: 5px; padding: 14px 15px; background: #141a1e; min-width: 0; }
+.cycle-component-header { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+.cycle-component-header h3 { margin: 0; font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
+.cycle-component-header .eyebrow { font-size: 9px; white-space: nowrap; }
+.cycle-component dl { margin: 0; }
+.cycle-component dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; }
+.cycle-component dt { color: var(--muted); font-size: 11px; }
+.cycle-component dd { margin: 0; text-align: right; font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.cycle-system-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 20px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--line); }
+.cycle-system-value { padding: 16px; background: #1b2227; min-width: 0; }
+.cycle-system-value > span { display: block; color: var(--muted); font-size: 10px; margin-bottom: 8px; }
+.cycle-system-value strong { display: block; color: var(--text); font-family: var(--mono); font-size: 22px; font-weight: 450; letter-spacing: -.6px; }
+.cycle-system-value strong small { font-family: var(--font); font-weight: 400; font-size: 11px; letter-spacing: 0; color: var(--muted); margin-left: 4px; }
+.cycle-system-value > small { display: block; margin-top: 8px; color: var(--quiet); font-size: 10px; line-height: 1.5; }
+.cycle-caveat { margin-top: 16px; padding-left: 12px; border-left: 2px solid #615273; color: #b8afc3; font-size: 11px; line-height: 1.65; }
+.template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.template-grid .template-card { display: flex; flex-direction: column; min-width: 0; margin: 0; padding: 18px; border-color: var(--line); background: #141a1e; text-align: left; }
+.template-grid .template-card:hover { background: #1e252b; border-color: #807052; }
+.template-grid .template-card .eyebrow { font-size: 9px; letter-spacing: .9px; }
+.template-grid .template-card h3 { font-size: 17px; line-height: 1.3; margin: 12px 0 10px; }
+.template-grid .template-card p { font-size: 11px; margin-bottom: 16px; }
+.template-grid .template-card .button { margin-top: auto; width: 100%; }
+.template-grid .template-card .badge { align-self: flex-start; margin-top: auto; }
+.template-card[data-template="electric"], .template-card.electric { border-top: 2px solid var(--mechanical); }
+.template-card[data-template="gas-generator"], .template-card.gas-generator { border-top: 2px solid var(--accent); }
+.template-card[data-template="pressure-fed"], .template-card.pressure-fed { border-top: 2px solid var(--cyan); }
+.template-card[data-template="pressure"] { border-top: 2px solid var(--cyan); }
+.template-card[data-template="turbine"] { border-top: 2px solid var(--accent); }
+.dialog:has(.template-grid) { width: min(850px, calc(100vw - 32px)); }
+@media (max-width: 899px) {
+  .cycle-results { margin-top: 24px; }
+  .cycle-ledger-row { padding: 13px 15px; }
+  .cycle-ledger-row > span, .cycle-component dt, .cycle-component dd { font-size: 12px; }
+  .cycle-ledger-row > small, .cycle-component-header .eyebrow { font-size: 10px; }
+  .cycle-component { padding: 16px; }
+  .cycle-caveat { font-size: 12px; }
+  .template-grid { grid-template-columns: 1fr; gap: 12px; }
+  .template-grid .template-card { padding: 18px; }
+  .template-grid .template-card h3 { font-size: 20px; }
+  .template-grid .template-card p { font-size: 12px; }
+  .template-grid .template-card .button { margin-top: 0; }
+}
+@media (max-width: 380px) {
+  .cycle-system-value { padding: 13px; }
+  .cycle-system-value strong { font-size: 19px; }
+}

@@ -1,58 +1,65 @@
-# AstroForge Lite in fünf Minuten vorführen
+# AstroForge 2.1 Lite in fünf Minuten vorführen
 
-Ziel: zeigen, wie ein Triebwerksentwurf und sein Versorgungssystem gemeinsam bearbeitet werden. Die Demonstration bleibt bei einem stationären Vorentwurf; sie verspricht keinen vollständigen Triebwerksnachweis.
+Ziel: einen Triebwerksentwurf über Komponenten bearbeiten und Druck-, Wärme- sowie Wellenleistungsbilanzen gemeinsam beurteilen. Die Cycle-Modelle sind ausdrücklich begrenzte Vorentwurfsmodelle.
 
 ## Vor der Vorführung
 
-- Browser und Anwendung auf dem tatsächlich eingesetzten Windows-Rechner oder Android-Handy öffnen. Beim privaten Hosting den Zugriff vorher prüfen; der Link ist nicht automatisch für Besucher öffentlich.
-- Aktuellen eigenen Entwurf als Datei speichern, dann die Vorlage **AF–01 / Pressure-fed** laden.
-- Den Ausgangsfall berechnen und das Ergebnis ansehen. Vorlage: 10 kN, 30 bar, O/F 2,6, Expansion 12.
-- Ein Referenzprojekt als JSON-Datei bereithalten. Bei lokalem Windows-Betrieb den Server geöffnet lassen. Für eine Offlinevorführung vorher einen tatsächlichen Offline-Neustart prüfen.
+- Den aktuellen 2.1-Quellstand aus dem GitHub-Repository bauen und lokal starten. Die frühere private 2.0-Site enthält diesen Cycle-Ausbau nicht.
+- Windows: `Start-AstroForge.cmd` oder ein nachweislich aktuelles 2.1-EXE-Paket verwenden. Für Android den Node-Server auf Windows starten und im selben Netzwerk über `http://<Windows-Netzwerkadresse>:4173` öffnen. Die EXE auf Port 4174 ist ausschließlich lokal erreichbar.
+- Eigenen Arbeitsstand zuerst als Datei sichern. Ein Referenzprojekt als JSON bereithalten. Für die Handyvorführung den Server eingeschaltet lassen; ein HTTP-LAN-Aufruf bietet keine zugesicherte Offlineinstallation.
+- Die drei Vorlagen einmal berechnen. Aktuelle Testergebnisse in `VALIDATION.md` prüfen und die Vorführung auf den tatsächlich eingesetzten Geräten durchspielen.
 
-## 0:00–0:45 · Das gesamte Triebwerk
+## 0:00–0:45 · Drei Architekturen, ein Arbeitsraum
 
-Den Systemplan zeigen: zwei getrennte Versorgungspfade, Injektor, Brennkammer und Glockendüse. Brennstoff und Oxidator sind farblich unterscheidbar.
+**Vorlage** öffnen und die drei Einstiege zeigen: **Druckgefördert**, **Pumpen & Kühlung** und **Turbine & Abgasdüse**. Alle beginnen mit demselben idealen Haupttriebwerksziel von 10 kN.
 
-Erklären: „AstroForge beginnt beim Triebwerksentwurf. Die Komponentenansicht verbindet die Systemebene mit den Details jedes Bauteils.“
+**Pumpen & Kühlung** laden. Die beiden Fluidpfade, Pumpen, gemeinsame Welle und den Kühlblock zeigen. Mechanische Zuordnungen unterscheiden sich farblich von Fluidleitungen.
 
-## 0:45–1:45 · Eine Section detaillieren
+Erklären: „Die Architektur ist bearbeitbar. Jeder Block hat ein benanntes Modell, Parameter und einen Beitrag zur Bilanz.“
 
-Die Brennstoff-Section öffnen. Die Brennstoffleitung auswählen und ihre **Länge von 1,2 m auf 2,4 m** ändern. Neu berechnen und den Druckverlust sowie den erforderlichen Versorgungsdruck vergleichen.
+## 0:45–1:45 · Wellenleistung prüfen
 
-Ein Bauteil verschieben und erklären, dass der grafische Verlauf die physische Leitungslänge nicht verändert. Zur Systemebene zurückkehren. Auf dem Handy dafür die Bereiche **System**, **Details** und **Ergebnisse** verwenden.
+Den **Elektrischen Antrieb** auswählen. Seine Drehzahl, den mechanischen Wirkungsgrad und die externe Antriebsleistung zeigen. In der Auswertung Pumpenbedarf, verfügbare Leistung und Drehmoment ansehen.
 
-## 1:45–2:45 · Eine Grenze sichtbar machen
+Die externe Antriebsleistung von **30 kW auf 1 kW** reduzieren und neu berechnen. Das Leistungsdefizit zeigen. Anschließend wieder **30 kW** einstellen und neu rechnen.
 
-Die **RP-1 Versorgung** wählen und den verfügbaren Druck von **55 bar auf 25 bar** setzen. Neu berechnen und die fehlende Druckreserve in der Auswertung zeigen.
+Erklären: „Der gewünschte Betriebspunkt braucht eine bestimmte Pumpenleistung. Ein grünes Druckbudget genügt nicht, wenn der Antrieb diese Leistung nicht liefern kann. Eine Leistungsreserve ist wiederum noch kein gelöster Drehzahlgleichgewichtspunkt.“
 
-Erklären: „Der Entwurf fordert mehr Versorgungsdruck, als hier verfügbar ist. Lite kennzeichnet das. Es erfindet keinen neuen Betriebspunkt.“
+## 1:45–2:30 · Eine Komponente detaillieren
 
-Den Druck wieder auf **55 bar** setzen und erneut berechnen. Bei Bedarf die geänderte Leitungslänge wieder auf 1,2 m zurückstellen.
+Die Brennstoff-Section öffnen. Die RP-1-Pumpe auswählen und ihre **Antriebswelle** im Inspector zeigen. Anschließend den Kühlblock wählen und die vorgegebene Wärmeaufnahme, den Druckverlust und cp ansehen. Die berechnete Austrittstemperatur in der Auswertung zeigen.
 
-## 2:45–3:45 · Von der Systemebene zur Geometrie
+Erklären: „Dieser Kühlblock bilanziert vorgegebene Wärme. Er dimensioniert noch keine Kanäle und berechnet keine Wandtemperatur. Die Hauptthermochemie bleibt von der eingestellten Versorgungstemperatur getrennt.“
 
-Die Düse auswählen. Die vorläufige 2D-Kontur und die Durchmesser zeigen. Die Expansion von **12 auf 16** ändern, neu berechnen und die geänderte Geometrie ansehen. Darauf hinweisen, dass vorherige Ergebnisse bis zur Neuberechnung als veraltet gelten.
+## 2:30–3:45 · Turbine, Abgasdüse und Systemleistung
 
-Die Modellhinweise öffnen: Thermochemie aus einem begrenzten CEA-Datenfeld, lokal ausgewertete Druckverluste und eine glatte kubische Glockenapproximation, keine validierte Rao-Kontur. Die CEA-Stoffkarten verwenden feste Reaktantentemperaturen von 298,15 K für RP-1 und 90,18 K für LOX. Eine Änderung der Versorgungstemperatur berechnet die Chemie nicht neu. Detaillierte Kühlung und strukturelle Nachweise sind spätere Ausbaustufen.
+Die Vorlage **Turbine & Abgasdüse** laden und berechnen. Den getrennten Zweig aus **Treibgasquelle → Turbine → Abgasdüse** sowie die Wellenzuordnung zeigen.
 
-## 3:45–4:30 · Das Projekt mitnehmen
+In der Auswertung Turbinenaustrittstemperatur, Turbinenleistung und Zusatzschub betrachten. Die Hauptkennwerte von **Gesamtschub** und **System-Isp** unterscheiden: Letzteres berücksichtigt den zusätzlichen Treibgasmassenstrom.
 
-**Speichern** wählen und die Projektdatei zeigen. Erläutern, dass dieselbe Datei auf Windows und Android geöffnet werden kann. Wenn das zweite Gerät bereitsteht, die vorher übertragene Referenzdatei dort öffnen und berechnen.
+Erklären: „Der Treibgasstrom ist hier eine vorgegebene Randbedingung. Das zeigt Komponenten- und Leistungszusammenhänge, aber noch keinen vollständig geschlossenen Gasgeneratorzyklus. Chemie und Abzweige dieses Gasgenerators sind nicht gelöst.“
 
-Optional die Stationstabelle als CSV exportieren. Die Datei enthält die berechneten Werte; sie ist kein vollständiger Prüfbericht.
+Die Düse auswählen und ihre vorläufige 2D-Kontur zeigen: glatte kubische Glockenapproximation, keine validierte Rao-Kontur.
 
-## 4:30–5:00 · Rückmeldung sammeln
+## 3:45–4:30 · Das System bearbeiten
 
-Drei konkrete Fragen stellen:
+Eine **Messstelle** hinzufügen. Im Inspector das passende Medium wählen, unter **In Versorgungspfad einsetzen** eine Verbindung auswählen und **In Leitung einsetzen** betätigen. Neu berechnen und den idealen Messwert zeigen.
 
-1. Welche Entwurfsentscheidung könnte dieses Werkzeug in Ihrem Alltag unterstützen?
-2. Welches Ergebnis fehlt, damit Sie den Vorentwurf sinnvoll bewerten können?
-3. Wäre als nächster Schritt detaillierte Kühlung, eine pumpengeförderte Architektur oder ein weiteres Stoffpaar am wertvollsten?
+Alternativ eine Leitung auswählen und ihre physische Länge verändern. Ein grafisches Verschieben verändert diese Länge nicht. **Rückgängig** demonstrieren. Änderungen kennzeichnen vorherige Ergebnisse bis zur Neuberechnung als veraltet.
 
-Keine zusätzliche Funktion im Gespräch als bereits verfügbar darstellen. Lite zeigt den durchgängigen Arbeitsablauf; die nächste Erweiterung soll aus einer tatsächlichen Entwurfsaufgabe folgen.
+## 4:30–5:00 · Projekt und nächste Entscheidung
+
+**Speichern** wählen. Die Projektdatei lässt sich auf Windows und Android öffnen; Autosave allein synchronisiert nicht zwischen Geräten. Bei Bedarf ein Ergebnis-JSON exportieren, das auch die Cycle-Auswertung enthält.
+
+Als Rückmeldung fragen: „Welche nächste Entscheidung möchten Sie damit treffen: eine belastbarere Kühlungsauslegung, einen vollständig gekoppelten Cycle oder den Vergleich weiterer Stoffpaare?“
+
+## Modellhinweise auf Nachfrage
+
+- Hauptthermochemie: begrenztes Datenfeld aus 392 RocketCEA-Zuständen; Interpolation innerhalb 10–80 bar, O/F 2–3,2 und Expansion 4–40.
+- Die CEA-Stoffkarten verwenden RP-1 bei 298,15 K und LOX bei 90,18 K. Änderungen an Versorgungstemperaturen oder Kühlwärme berechnen diese Chemie nicht neu.
+- Pumpen verwenden inkompressible Druckarbeit; Turbine und Abgasdüse konstantes cp und γ. Keine Kennfelder, Starttransienten, Kavitation oder automatische Off-design-Lösung.
+- Ergebnisse sind Vorentwurf und Komponenten-Screening, kein thermischer, struktureller oder experimenteller Freigabenachweis.
 
 ## Falls etwas nicht wie erwartet läuft
 
-Die Vorlage erneut laden und berechnen. Nicht unterstützte Verbindungen oder getrennte Pfade werden in der Auswertung benannt; betroffene Komponenten können von dort geöffnet werden. Bei einem Gerätewechsel ist eine Projektdatei erforderlich, da Autosave nicht zwischen Geräten synchronisiert wird.
-
-Die Browserdateien laufen lokal, aber privater Hosting-Zugriff kann Internet und Anmeldung benötigen. Ein physisches Android-Gerät sollte vor der Veranstaltung separat getestet werden; bisherige mobile Emulation ersetzt diesen Test nicht.
+Die gewünschte Vorlage erneut laden und berechnen. Ungültige Verbindungen und fehlende Wellenzuordnungen anhand der Meldungen korrigieren. Für eine Vorführung mit einem Handy die LAN-Verbindung und Windows-Firewall vorab prüfen. Der aktuelle Stand ist keine native Android-App; eine physische Android-Abnahme ist getrennt von Browseremulation durchzuführen.

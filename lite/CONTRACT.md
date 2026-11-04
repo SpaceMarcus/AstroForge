@@ -1,5 +1,11 @@
 # Shared implementation contract
 
+## Cycle extension (2.1; supersedes type restrictions below)
+
+Project files remain version 1 and old pressure-fed projects remain supported. Added node types: pump, regen, shaft, gasSource, turbine, exhaust. Mechanical shafts have medium `mechanical`, no fluid edges, and are referenced by pump/turbine `params.shaftId`. Pump and regen may occur in feed sections; regen is fuel-only. The optional auxiliary gas circuit is exactly gasSource → turbine → exhaust, supplied independently of the main LOX/RP-1 feeds. It is not a mass-balanced gas-generator cycle. Main chamber performance remains in `performance`; auxiliary and combined system quantities are in `cycle.auxiliary`. Pump, thermal, turbine and shaft balances are in `cycle` arrays. Parameter bounds and results are defined in physics.js and mirrored by cycle-ui.js.
+
+Prescribed pump pressure rise, prescribed cooling heat and pressure loss, and calorically perfect auxiliary gas enable bounded component studies. No pump maps, NPSH, boiling/coking, hot-wall calculation, torque-speed operating-point solve or geometry-based auxiliary nozzle solve is claimed.
+
 Vanilla browser ES modules, no runtime dependencies. Root owns index.html, app.js, state.js, persistence, packaging, PWA. Other agents own separate files.
 
 Project = {format:'astroforge-lite',version:1,name,design:{thrustN,pcBar,of,eps,paBar,lstarM,contractionRatio},nodes:[{id,type,label,medium:'fuel'|'ox'|'gas',section:null|'fuel'|'ox',x,y,params:{}}],edges:[{id,from,to}],updatedAt}. Types: source,line,valve,injector,chamber,nozzle,sensor. Default graph two source->line->valve->injector paths, injector->chamber->nozzle. Shared injector has medium gas; target media validated by incoming path. Sensor optional in series, no losses. Sections fuel/ox contain line,valve,sensor; source stays at root. At root canvas may show all nodes with section outlines; entering section shows nodes in that section with boundary stubs. IDs stable.

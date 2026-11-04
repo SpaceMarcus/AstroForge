@@ -1,8 +1,18 @@
 const NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 152;
 const HEIGHT = 104;
-const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb' };
-const TYPE_NAMES = { source: 'VERSORGUNG', line: 'LEITUNG', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE' };
+const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb', mechanical: '#c2a2ed' };
+const TYPE_NAMES = { source: 'VERSORGUNG', line: 'LEITUNG', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE', pump: 'PUMPE', regen: 'KÜHLKANAL', shaft: 'WELLE', gasSource: 'GASVERSORGUNG', turbine: 'TURBINE', exhaust: 'ABGASAUSLASS' };
+
+export function fluidPortsFor(type) {
+  return { input: !['source', 'gasSource', 'shaft'].includes(type), output: !['nozzle', 'exhaust', 'shaft'].includes(type) };
+}
+
+export function mechanicalLinks(nodes) {
+  const shafts = new Map(nodes.filter(node => node.type === 'shaft').map(node => [node.id, node]));
+  return nodes.filter(node => ['pump', 'turbine'].includes(node.type) && shafts.has(node.params?.shaftId))
+    .map(node => ({ component: node, shaft: shafts.get(node.params.shaftId) }));
+}
 
 function svg(tag, attrs = {}, text) {
   const element = document.createElementNS(NS, tag);
@@ -168,6 +178,22 @@ export class GraphEditor {
         group.append(link); this.scene.append(group);
       }
     }
+    for (const { component, shaft } of mechanicalLinks(this.project.nodes)) {
+      const componentVisible = ids.has(component.id), shaftVisible = ids.has(shaft.id);
+      if (!componentVisible && !shaftVisible) continue;
+      const c = this.position(component), s = this.position(shaft);
+      let a = { x: c.x + WIDTH / 2, y: c.y + HEIGHT };
+      let b = { x: s.x + WIDTH / 2, y: s.y + HEIGHT };
+      if (!shaftVisible) b = { x: a.x + 90, y: a.y + 68 };
+      if (!componentVisible) a = { x: b.x - 90, y: b.y + 68 };
+      const bendY = Math.max(a.y, b.y) + 50;
+      const link = svg('g', { class: 'graph-mechanical-link', role: 'img', 'aria-label': `Mechanische Kopplung: ${component.label} mit ${shaft.label}`, 'pointer-events': 'none' });
+      link.append(svg('title', {}, `Wellenkopplung · ${component.label} → ${shaft.label} · im Inspector zuordnen`));
+      link.append(svg('path', { d: `M ${a.x} ${a.y} C ${a.x} ${bendY}, ${b.x} ${bendY}, ${b.x} ${b.y}`, fill: 'none', stroke: COLORS.mechanical, 'stroke-width': 1.6, 'stroke-dasharray': '7 5', 'stroke-opacity': .75 }));
+      for (const point of [a, b]) link.append(svg('circle', { cx: point.x, cy: point.y, r: 3.5, fill: '#10181d', stroke: COLORS.mechanical, 'stroke-width': 1.5 }));
+      if (!shaftVisible || !componentVisible) link.append(svg('text', { x: !shaftVisible ? b.x : a.x, y: (!shaftVisible ? b.y : a.y) + 18, 'text-anchor': 'middle', fill: COLORS.mechanical, 'font-size': 9 }, (!shaftVisible ? shaft.label : component.label).slice(0, 22)));
+      this.scene.append(link);
+    }
     for (const edge of this.project.edges) {
       const from = nodeMap.get(edge.from), to = nodeMap.get(edge.to);
       if (!from || !to) continue;
@@ -219,12 +245,13 @@ export class GraphEditor {
     group.append(svg('text', { x: 14, y: 63, fill: '#e8f0f4', 'font-size': 12, 'font-weight': 550 }, node.label.length > 21 ? `${node.label.slice(0, 20)}…` : node.label));
     const title = svg('title', {}, node.label); group.append(title);
     group.append(svg('text', { x: 14, y: 84, fill: this.options.stale ? '#82949f' : '#afbec8', 'font-size': 10, class: 'graph-mono' }, this.nodeDetail(node)));
-    if (node.type !== 'source') {
+    const fluidPorts = fluidPortsFor(node.type);
+    if (fluidPorts.input) {
       if (node.type === 'injector') {
         group.append(this.makePort(node, false, 37, 'ox'), this.makePort(node, false, 67, 'fuel'));
       } else group.append(this.makePort(node, false, HEIGHT / 2));
     }
-    if (node.type !== 'nozzle') group.append(this.makePort(node, true, HEIGHT / 2));
+    if (fluidPorts.output) group.append(this.makePort(node, true, HEIGHT / 2));
     this.scene.append(group);
   }
   makePort(node, output, y, medium) {
@@ -239,13 +266,18 @@ export class GraphEditor {
     const station = this.options.result?.stations?.[node.id];
     if (station && !this.options.stale) return `${node.medium === 'gas' ? 'p_mod' : 'p_req'} ${formatNumber(station.pressureBar)} bar`;
     const p = node.params || {};
-    if (node.type === 'source') return `${formatNumber(p.pressureBar)} bar · ${formatNumber(p.temperatureK)} K`;
+    if (node.type === 'source' || node.type === 'gasSource') return `${formatNumber(p.pressureBar)} bar · ${formatNumber(p.temperatureK)} K`;
     if (node.type === 'line') return `Ø ${formatNumber(p.diameterMm)} mm · ${formatNumber(p.lengthM)} m`;
     if (node.type === 'valve') return p.open === false ? 'Geschlossen' : `Offen · K ${formatNumber(p.k)}`;
     if (node.type === 'chamber') return `${formatNumber(this.project.design?.pcBar)} bar · O/F ${formatNumber(this.project.design?.of, 2)}`;
     if (node.type === 'nozzle') return `Glocke · ε ${formatNumber(this.project.design?.eps)}`;
     if (node.type === 'injector') return 'LOX + RP-1';
     if (node.type === 'sensor') return ({ pressure: 'Druckmessstelle', temperature: 'Temperaturmessstelle', massflow: 'Massenstrommessstelle' })[p.quantity] || 'Virtuelle Messstelle';
+    if (node.type === 'pump') return `Δp +${formatNumber(p.riseBar)} bar`;
+    if (node.type === 'regen') return `Q ${formatNumber(p.heatKW)} kW`;
+    if (node.type === 'shaft') return `${formatNumber(p.rpm, 0)} min⁻¹`;
+    if (node.type === 'turbine') return `p_out ${formatNumber(p.outletBar)} bar`;
+    if (node.type === 'exhaust') return `p_exit ${formatNumber(p.exitBar)} bar`;
     return 'Vorentwurf';
   }
   drawSymbol(g, node) {
@@ -269,6 +301,23 @@ export class GraphEditor {
       case 'sensor':
         append('circle', { cx: 18, cy: 15, r: 12 });
         append('path', { d: 'M 18 27 V 34 M 12 34 H 24 M 18 15 L 24 9' }); break;
+      case 'pump':
+        append('circle', { cx: 18, cy: 17, r: 13 });
+        append('path', { d: 'M 0 17 H 5 M 31 17 H 39 M 13 8 L 25 17 L 13 26 Z M 18 30 V 36' }); break;
+      case 'regen':
+        append('rect', { x: 4, y: 4, width: 29, height: 27, rx: 3 });
+        append('path', { d: 'M 0 17 H 9 V 10 H 15 V 25 H 21 V 10 H 27 V 17 H 39 M 12 0 V -4 M 25 0 V -4' }); break;
+      case 'shaft':
+        append('path', { d: 'M 0 14 H 38 V 20 H 0 Z M 7 8 V 26 M 11 8 V 26 M 27 8 V 26 M 31 8 V 26 M 12 3 Q 19 -2 25 3 M 22 0 L 25 3 L 22 5' }); break;
+      case 'gasSource':
+        append('rect', { x: 4, y: 1, width: 25, height: 30, rx: 8 });
+        append('path', { d: 'M 29 17 H 39 M 18 6 L 12 17 H 21 L 15 26' }); break;
+      case 'turbine':
+        append('circle', { cx: 18, cy: 17, r: 13 });
+        append('circle', { cx: 18, cy: 17, r: 3 });
+        append('path', { d: 'M 0 17 H 5 M 31 17 H 39 M 18 14 Q 10 7 17 4 M 21 17 Q 28 9 31 17 M 18 20 Q 26 27 19 30 M 15 17 Q 8 25 5 17 M 18 30 V 36' }); break;
+      case 'exhaust':
+        append('path', { d: 'M 0 11 H 12 L 30 3 M 0 23 H 12 L 30 31 M 20 17 H 39 M 34 12 L 39 17 L 34 22' }); break;
     }
   }
   activate(target) {
