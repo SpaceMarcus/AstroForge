@@ -87,4 +87,3 @@ test('zero-volume boundary stations remain visible and can hold the hottest wall
   assert.ok(!html.includes('NaN'));
   assert.ok(!html.includes('Infinity'));
 });
-
