@@ -1,5 +1,5 @@
-const CACHE='astroforge-lite-v2-8';
-const FILES=['./','./index.html','./src/app.js','./src/sections.js','./src/cooling-layout.js','./src/liquid-network.js','./src/engine-ui.js','./src/cycle-ui.js','./src/cooling.js','./src/cooling-config.js','./src/cooling-ui.js','./cooling-data.json','./src/state.js','./src/graph.js','./src/physics.js','./src/worker.js','./src/styles.css','./thermo.json','./icon.svg','./icon-192.png','./icon-512.png','./manifest.webmanifest'];
+const CACHE='astroforge-lite-v2-9';
+const FILES=['./','./index.html','./src/app.js','./src/propellants.js','./propellant-data.json','./src/sections.js','./src/cooling-layout.js','./src/liquid-network.js','./src/engine-ui.js','./src/cycle-ui.js','./src/cooling.js','./src/cooling-config.js','./src/cooling-ui.js','./cooling-data.json','./src/state.js','./src/graph.js','./src/physics.js','./src/worker.js','./src/styles.css','./thermo.json','./icon.svg','./icon-192.png','./icon-512.png','./manifest.webmanifest'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)));self.skipWaiting();});
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('astroforge-lite-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 const ASSETS=new Set(FILES.map(path=>new URL(path,self.registration.scope).href));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createTemplate,compactFeedlines} from '../src/state.js';
 import {solveProject} from '../src/physics.js';
+import {selectCoolingNode} from '../src/cooling-layout.js';
 const data=JSON.parse(readFileSync(new URL('../public/thermo.json',import.meta.url))),cooling=JSON.parse(readFileSync(new URL('../public/cooling-data.json',import.meta.url)));
 const solve=p=>solveProject(p,data,cooling);
 function branched(){const p=compactFeedlines(createTemplate('electric')),edge=p.edges.find(e=>e.from==='regen');
@@ -55,4 +56,37 @@ test('constant-property restriction matches independent K-loss calculation',()=>
 test('branched networks reject unmodelled gas-line losses and incorrect shaft media',()=>{
  const p=branched();p.edges.find(e=>e.from==='chamber').pipe={lengthM:1,diameterMm:20,roughnessMm:0,k:0};assert.equal(solve(p).ok,false);
  const q=branched();q.nodes.find(n=>n.type==='shaft').medium='fuel';assert.equal(solve(q).ok,false);
+});
+
+
+test('serial feedline expansion preserves manifold-defined cooling bounds',()=>{
+ const p=compactFeedlines(createTemplate('electric')),edge=p.edges.find(e=>e.to==='regen'),from=edge.from;
+ p.nodes.push({id:'positioned-manifold',type:'manifold',label:'Positioned manifold',medium:'fuel',section:'cooling',x:0,y:0,params:{diameterMm:18,k:0,axialPosition:.75}});
+ edge.from='positioned-manifold';p.edges.push({id:'man-in',from,to:'positioned-manifold',pipe:{lengthM:0,diameterMm:18,roughnessMm:0,k:0}});
+ const r=solve(p);assert.equal(r.ok,true,JSON.stringify(r.errors));assert.equal(r.cycle.cooling[0].coolingEnd,.75);assert.ok(Math.abs(r.cycle.cooling[0].inletXM-.75*r.geometry.contour.at(-1).x)<1e-10);
+});
+test('two disjoint serial cooling segments use the multiple-segment solver',()=>{
+ const p=compactFeedlines(createTemplate('electric')),a=p.nodes.find(n=>n.id==='regen');a.params.coolingStart=.5;
+ const b=structuredClone(a);b.id='second-jacket';b.params.coolingStart=0;b.params.coolingEnd=.5;p.nodes.push(b);
+ const out=p.edges.find(e=>e.from===a.id);out.from=b.id;p.edges.push({id:'serial-cooling',from:a.id,to:b.id});
+ const r=solve(p);assert.equal(r.ok,true,JSON.stringify(r.errors));assert.equal(r.cycle.cooling.length,2);assert.ok(Math.abs(r.network.massResidualKgS)<1e-9);
+});
+test('unknown cooling mode is rejected consistently in branched projects',()=>{
+ const p=branched();p.nodes.find(n=>n.id==='regen').params={mode:'typo',heatKW:0,dropBar:0,cpJkgK:2100};
+ const r=solve(p);assert.equal(r.ok,false);assert.match(r.errors[0].message,/Kühlungsmodell/);
+});
+
+
+test('selecting a manifold opens its attached cooling segment rather than the first jacket',()=>{
+ const p=compactFeedlines(createTemplate('cooling-external')),a=p.nodes.find(n=>n.id==='regen'),b=structuredClone(a);b.id='second';p.nodes.push(b,{id:'second-manifold',type:'manifold',params:{axialPosition:.5}});p.edges.push({id:'second-inlet',from:'second-manifold',to:'second'});
+ assert.equal(selectCoolingNode(p,'second-manifold').id,'second');assert.equal(selectCoolingNode(p,'second').id,'second');assert.equal(selectCoolingNode(p,'cool-manifold').id,'regen');assert.equal(selectCoolingNode(p,'design').id,'regen');
+});
+
+test('section placement never changes physics in serial or branched solvers',()=>{
+ for(const p of [compactFeedlines(createTemplate('pressure')),branched()]){
+  const before=solve(p);assert.equal(before.ok,true,JSON.stringify(before.errors));
+  for(const n of p.nodes)n.section=n.medium==='fuel'?'ox':'fuel';
+  const after=solve(p);assert.equal(after.ok,true,JSON.stringify(after.errors));assert.deepEqual(after.performance,before.performance);assert.deepEqual(after.feeds,before.feeds);assert.deepEqual(after.stations,before.stations);
+  p.nodes[0].section='unknown';assert.equal(solve(p).ok,false);
+ }
 });

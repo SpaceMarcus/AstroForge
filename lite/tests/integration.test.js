@@ -39,7 +39,7 @@ test('layout and labels do not stale physics; parameter and connection edits do'
   assert.equal(fingerprint(moved), key);
   assert.deepEqual(solveProject(moved, thermo).performance, solveProject(project, thermo).performance);
   moved.nodes[1].section = null;
-  assert.notEqual(fingerprint(moved), key, 'Section compatibility must be revalidated');
+  assert.equal(fingerprint(moved), key, 'Section placement is visual only');
   assert.deepEqual(solveProject(moved, thermo).performance, solveProject(project, thermo).performance);
   moved.nodes[1].params.lengthM += 2;
   assert.notEqual(fingerprint(moved), key);

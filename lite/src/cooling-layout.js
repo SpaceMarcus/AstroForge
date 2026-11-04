@@ -15,3 +15,10 @@ export function contourPosition(geometry,fraction){
  const a=contour[i],b=contour[i+1],r=a.r+(b.r-a.r)*(x-a.x)/(b.x-a.x),throat=contour.reduce((u,v)=>v.r<u.r?v:u);
  return {xM:x,epsilon:(r/geometry.throatRadiusM)**2,region:x<throat.x?'vor Hals':x>throat.x?'nach Hals':'Hals'};
 }
+
+export function selectCoolingNode(project,selectedId){
+ const channels=project.nodes.filter(n=>n.type==='regen'&&n.params.mode==='channels');
+ const selected=channels.find(n=>n.id===selectedId);if(selected)return selected;
+ const linkedIds=new Set(project.edges.filter(e=>e.from===selectedId||e.to===selectedId).map(e=>e.from===selectedId?e.to:e.from));
+ return channels.find(n=>linkedIds.has(n.id))||channels[0];
+}

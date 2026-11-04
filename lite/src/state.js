@@ -1,3 +1,4 @@
+import {getPair} from './propellants.js';
 import {CHANNEL_DEFAULTS} from './cooling-config.js';
 export const TYPES = {source:'Versorgung',coolantSource:'Kühlmittelversorgung',branch:'Abzweig',restriction:'Verengung',consumer:'Verbraucher / Preburner',line:'Leitung',turn:'Umlenkung',manifold:'Manifold',valve:'Ventil',sensor:'Messstelle',pump:'Pumpe',regen:'Regenerativkühlung',shaft:'Welle / Antrieb',gasSource:'Treibgasquelle',turbine:'Turbine',exhaust:'Abgasdüse',injector:'Injektor',chamber:'Brennkammer',nozzle:'Glockendüse'};
 export const DEFAULT_PARAMS = {
@@ -32,7 +33,7 @@ export function createProject(name='AF–01 / Pressure-fed') {
   return {format:'astroforge-lite',version:1,name,design:{thrustN:10000,pcBar:30,of:2.6,eps:12,paBar:1.01325,lstarM:1.1,contractionRatio:3},nodes,edges:pairs.map(([from,to],i)=>({id:'e'+i,from,to})),updatedAt:new Date().toISOString()};
 }
 export function fingerprint(project) {
-  return JSON.stringify({design:project.design,nodes:project.nodes.map(({id,type,medium,section,params})=>({id,type,medium,section,params})).sort((a,b)=>a.id.localeCompare(b.id)),edges:project.edges.map(({id,from,to,pipe})=>({id,from,to,pipe})).sort((a,b)=>(a.from+a.to).localeCompare(b.from+b.to))});
+  return JSON.stringify({design:project.design,nodes:project.nodes.map(({id,type,medium,params})=>({id,type,medium,params})).sort((a,b)=>a.id.localeCompare(b.id)),edges:project.edges.map(({id,from,to,pipe})=>({id,from,to,pipe})).sort((a,b)=>(a.from+a.to).localeCompare(b.from+b.to))});
 }
 export function createTemplate(id='pressure') {
  const template=TEMPLATES.find(t=>t.id===id);if(!template)throw Error('Unbekannte Vorlage.');
@@ -75,6 +76,7 @@ export function parseProject(text) {
   if(p?.format!=='astroforge-lite'||p.version!==1) throw Error('Keine unterstützte AstroForge-Lite-Projektdatei (Version 1).');
   if(typeof p.name!=='string'||p.name.length>120||!p.design||!Array.isArray(p.nodes)||!Array.isArray(p.edges)||p.nodes.length>100||p.edges.length>150) throw Error('Ungültige Projektstruktur.');
   for(const key of ['thrustN','pcBar','of','eps','paBar','lstarM','contractionRatio']) if(!Number.isFinite(p.design[key])) throw Error('Ungültiger Entwurfswert: '+key);
+  getPair(p.design);
   const ids=new Set();
   for(const n of p.nodes){
     if(!n||typeof n.id!=='string'||!/^[\w-]{1,80}$/.test(n.id)||ids.has(n.id)||!Object.hasOwn(TYPES,n.type)||typeof n.label!=='string'||n.label.length>80||!['fuel','ox','gas','mechanical'].includes(n.medium)||![null,'fuel','ox','cooling'].includes(n.section)||!Number.isFinite(n.x)||!Number.isFinite(n.y)||Math.abs(n.x)>1e5||Math.abs(n.y)>1e5||!n.params||typeof n.params!=='object'||Array.isArray(n.params)) throw Error('Ungültige oder doppelte Komponente.');

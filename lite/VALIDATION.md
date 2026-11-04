@@ -111,3 +111,16 @@ Browser verification: desktop 1280×720 and responsive viewport 390×844. Legacy
 Browserprüfung bei 1280×720 und 390×844: neue Vorlagen berechnet, Cooling-Section geöffnet, Manifold per Slider verschoben (99.9 % / ε 11.99), gebundene Streckengrenze geprüft. Abzweigleitung zeigt 0.200 kg/s, 581.7 K, erforderliche 25 bar nach Druckabgleich, 36 bar am Knoten und 11 bar zusätzlichen Drosselbedarf. Gesamter Massenabschluss im Beispiel 0 kg/s; Hauptbedarf 4.143 kg/s plus 0.200 kg/s Verbraucher. Kein horizontaler Dokumentüberlauf bei 390 px, keine Browserfehler. SVG-Leitungsauswahl zusätzlich per Tastatur geprüft. Physisches Android-Gerät und neue Windows-EXE wurden für 2.4 nicht geprüft bzw. gebaut.
 
 Die Prüfung belegt Rechen- und Bedienkonsistenz des Bedarfsmodells, keinen experimentell validierten Betriebspunkt. Film und Preburner sind ausschließlich Verbraucherrandbedingungen. Serienprojekte bleiben auf dem bisherigen Solver; verzweigte Projekte verwenden das neue Druckbudgetmodell.
+
+
+## 2.5 Stoffauswahl und Logikprüfung — 2026-11-04
+
+111/111 automatisierte Tests bestanden. Nach Ergänzung der Stoffquellen-Metadaten zusätzlich alle fünf Stoffphysiktests bestanden. Alle elf Kombinationen werden am stationären Testpunkt gerechnet; Stoffwechsel, JSON-Persistenz, Legacy-Default und Undo werden separat geprüft. Fehlende oder falsch zugeordnete Tabellen werden abgewiesen.
+
+Regressionsnachweise: Manifold-Grenze bleibt bei Feedline-Expansion bei 75 %; mehrere getrennte serielle Mäntel; passende Mantelauswahl am Manifold; ungültige Kühlmodi; Anzeigegruppen ohne Einfluss auf Physik und Ergebnisgültigkeit. Methan-Abzweig stimmt mit einer unabhängigen Ventil-K-Rechnung überein. Ethanol-Kanäle mit LOX, N2O und HTP90 (separate 4 kg/s, halbe Kontur) schließen jeweils die Energie auf <0.005 W ab, ohne eine RP-1-Kühltabelle zu übergeben.
+
+Der neue Generator prüft alle CEA-Zellmittelpunkte mit separaten direkten Backendaufrufen und dokumentiert die Abweichungen pro Größe. Größte beobachtete relative Abweichung unter den neuen Gittern: 3.47 % (N2O/Ethanol); dies ist kein globales Fehlerlimit. Ethanol-Gastransport- und Kühlmittelinterpolation besitzen eigene Stichprobenmetadaten. Keine experimentelle Validierung.
+
+Browser: Desktop 1280×720 und Handy-Viewport 390×844. HTP90/Propan berechnet (30 bar, O/F 7.5), nach Reload Auswahl/O/F-Grenzen erhalten; Methanwahl und Berechnung über mobile Details/Ergebnisse bedient. Bei 390 px kein horizontaler Dokumentüberlauf. Propanwechsel an einem vorhandenen Kanalmantel liefert die ausdrückliche Nichtverfügbarkeitsmeldung; Undo stellt LOX/RP-1 wieder her. Keine Browserfehler beobachtet. Physisches Androidgerät und neues Windows-EXE-Paket wurden nicht geprüft bzw. gebaut.
+
+Der Logik-Agent-Bericht steht in LOGIC-AUDIT.md. Die neue Datenbasis erweitert Thermochemie und begrenzte Flüssigkeits-Screenings, nicht die Anzahl vollständig validierter Engine-Cycles.

@@ -59,7 +59,7 @@ test('high-loss channels reconstruct needed supply pressure rather than failing 
 });
 test('higher chamber pressure changes geometric thermal load; a second full cooling jacket is rejected',()=>{
  const p=fixture(),a=solve(p);p.design.pcBar=40;const b=solve(p);assert.equal(b.ok,true,JSON.stringify(b.errors));assert.notEqual(a.cycle.cooling[0].maxHeatFluxWm2,b.cycle.cooling[0].maxHeatFluxWm2);
- const n=p.nodes.find(n=>n.type==='regen'),edge=p.edges.find(e=>e.from===n.id);p.nodes.push({...structuredClone(n),id:'second-jacket'});p.edges.push({id:'second-out',from:'second-jacket',to:edge.to});edge.to='second-jacket';assert.equal(solve(p).ok,false);assert.ok(solve(p).errors.some(e=>e.message.includes('Maximal eine')));
+ const n=p.nodes.find(n=>n.type==='regen'),edge=p.edges.find(e=>e.from===n.id);p.nodes.push({...structuredClone(n),id:'second-jacket'});p.edges.push({id:'second-out',from:'second-jacket',to:edge.to});edge.to='second-jacket';assert.equal(solve(p).ok,false);assert.ok(solve(p).errors.some(e=>e.message.includes('überlappen')));
 });
 test('new demo templates close thermal, supply and drive budgets while excessive pump rise stays invalid',()=>{
  for(const id of ['electric','turbine']){const p=createTemplate(id),r=solve(p);assert.equal(r.ok,true,JSON.stringify(r.errors));const c=r.cycle.cooling[0];assert.equal(c.feasible,true);assert.ok(c.wallMarginK>0&&c.wallMarginK<50);assert.ok(r.feeds.fuel.marginBar>0);assert.ok(r.cycle.shafts.every(s=>s.feasible));assert.ok(Math.abs(c.energyResidualW)<.01);assert.ok(c.outletTemperatureK<633);}

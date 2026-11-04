@@ -1,3 +1,13 @@
+## 2.5.0 — Stoffkombinationen und Logikkonsistenz
+
+- Elf definierte Kombinationen: LOX mit RP-1/Methan/Wasserstoff/Ethanol/Propan; N2O und HTP 90 % jeweils mit RP-1/Ethanol/Propan.
+- Eigene CEA-Datenfelder, O/F-Grenzen, dokumentierte Flüssigkeitswerte, Quellen und Zwischenpunktprüfungen je Kombination. Kein stiller RP-1-Fallback.
+- Stoffwechsel im Triebwerksentwurf setzt O/F und Versorgungstemperaturen auf dokumentierte Startwerte; Undo und Projektdateien behalten die Auswahl.
+- Ethanol-Kanalkühlung mit eigener CoolProp-Tabelle; RP-1 weiterhin mit n-Dodecan-Ersatzstoff. Methan/H2/Propan-Kanäle werden noch abgewiesen.
+- Manifold-Kopplung über Feedline-Pfeile, mehrere serielle Kühlstrecken, Mantelauswahl und Modusvalidierung korrigiert.
+- CSV kennzeichnet erforderlichen Zweig-Druckabgleich und verwendet die Druckreserve der richtigen Kühlversorgung.
+- Separate Logikprüfung dokumentiert in LOGIC-AUDIT.md.
+
 ## 2.4.0 — Cooling-Netz und Abzweige
 
 - Eigene Cooling-Section mit Brennstoff aus dem Feed-System oder separater RP-1-Kühlversorgung.

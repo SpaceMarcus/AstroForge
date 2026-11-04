@@ -221,3 +221,26 @@ Verengungen verwenden Δp = K ρ v²/2 mit Geschwindigkeit im Engpass. K wird vo
 Separate Kühlversorgung verwendet denselben n-Dodecan-Ersatzstoff wie der Hauptbrennstoff. Eine direkte Manifold-Verbindung setzt den entsprechenden Kühlstreckenendpunkt auf seine axiale Position. Angezeigt wird ε = A(x)/At einschließlich „vor/nach Hals“, da ε allein die axiale Lage nicht eindeutig bestimmt. Nicht überlappende Teilstrecken können gleichzeitig gegen- und gleichsinnig durchströmt werden. Nicht gekühlte Wandbereiche werden thermisch nicht nachgewiesen.
 
 Verbraucher können als Preburner, Film oder sonstiger Auslass bezeichnet werden. Sie entnehmen Masse; es gibt keine Preburner-Chemie, Filmwärmeabschirmung oder Verbraucherschub. Der zusätzliche Massenverbrauch reduziert den ausgewiesenen System-Isp. Die bestehende vorgegebene Treibgasversorgung ist weiterhin unabhängig, keine thermochemische Kopplung zum Preburner-Verbraucher. Mischknoten, Rückführschleifen und überlappende Kühlflächen werden abgewiesen.
+
+
+## 2.5: Stoffauswahl und Gültigkeit
+
+Elf fest definierte Paare statt beliebiger ungeprüfter Kombinationen:
+
+| Oxidator | Brennstoffe | Start-O/F / Datenbereich |
+|---|---|---|
+| LOX | RP-1, Methan, Wasserstoff, Ethanol, Propan | 2.6 / 2–3.2; 3.2 / 2.5–4; 5.5 / 4–7; 1.6 / 1.2–2; 2.8 / 2–3.5 |
+| N2O | RP-1, Ethanol, Propan | 6 / 4–8; 4.5 / 3–6; 6.5 / 4–9 |
+| HTP 90 Gew.-% | RP-1, Ethanol, Propan | 7 / 5–9; 5 / 3.5–6.5; 7.5 / 5–10 |
+
+Startwerte sind Bedienvorgaben, keine optimierten Betriebspunkte. Kammerdruck bleibt 10–80 bar, Expansion 4–40. Jeder neue Datensatz stammt aus direkten RocketCEA-Aufrufen mit den dokumentierten Reaktantenkarten. Alle Zellmittelpunkte wurden zusätzlich direkt gerechnet; die Metadaten enthalten größte beobachtete Interpolationsabweichungen je Ergebnisgröße. Diese Stichproben sind weder globale Fehlergrenzen noch experimentelle Modellvalidierung. Karten und deren Temperaturen bleiben feste Thermochemierandbedingungen; die Versorgungstemperatur verändert sie nicht.
+
+Flüssige Feed-Screeningwerte: CoolProp HEOS bei 70 bar und Nominaltemperatur (Methan 110 K, Wasserstoff 20 K, Ethanol 293.15 K, Propan 230 K, LOX 90 K, N2O 250 K). Dichte und Viskosität werden außerhalb der Kanalkühlung konstant verwendet. N2O-Viskosität kommt mangels CoolProp-Transportmodell aus RocketProps 0.1.9 als gesättigte Flüssigkeitsviskosität bei 250 K. Die konservative Mindestdruckgrenze entspricht dem Sättigungsdruck am oberen Ende des jeweiligen engen Temperaturfensters. Unterschreitungen im erforderlichen statischen Druckbudget werden abgewiesen. Dies ersetzt keine NPSH-, Kavitation-, Zweiphasen- oder Selbstbedrückungsrechnung.
+
+HTP ist ausdrücklich 90 Gew.-% H2O2 und 10 Gew.-% Wasser. Feed-Screening verwendet 1390 kg/m³ und 1.26 mPa·s bei 20 °C aus dem Evonik-Aeronautikdatenblatt, begrenzt auf 288–303 K. Es wird keine HTP-Zersetzung, Katalysatorreaktion oder HTP-Kanalkühlung modelliert. Propan ist im Modell unterkühlte Flüssigkeit um 230 K, kein Raumtemperatur-LPG-Gemisch.
+
+Kanalkühlung ist für RP-1 (n-Dodecan-Ersatzstoff) und reines Ethanol freigegeben. Die Gastransportdaten passen zum gewählten Oxidator/Brennstoffpaar. Ethanol verwendet CoolProp-Werte bis 500 K mit ungültigen Phasenzellen ausdrücklich gesperrt; RP-1 behält die bestehende Ersatzstofftabelle. Methan-, Wasserstoff- und Propan-Kanäle werden abgewiesen, bis passende kryogene/überkritische Kühlmodelle vorliegen. Ein vorhandener Kühlmantel wird beim Stoffwechsel nicht still entfernt oder in ein anderes Modell umgestellt.
+
+Quellen: [RocketCEA-Reaktantenkarten](https://rocketcea.readthedocs.io/en/latest/propellants.html), [CoolProp-Fluide und Modellreferenzen](https://coolprop.org/fluid_properties/index.html), [RocketProps N2O](https://rocketprops.readthedocs.io/en/latest/n2o_prop.html), [Evonik HTP für Raumfahrtanwendungen](https://active-oxygens.evonik.com/zh/attachment/140277?rev=9a24167032bd618d7f7ff672a62fa152).
+
+Reproduktion: Python-Abhängigkeiten in `tools/requirements-data.txt`, Generator `tools/generate_propellants.py`. Die Browseranwendung bleibt ohne Python- oder Paketinstallation nutzbar; sie lädt die vorberechneten Tabellen lokal.

@@ -1,3 +1,4 @@
+import {getPair,getFluid} from './propellants.js';
 import {coolingParams} from './cooling-layout.js';
 import {solveLiquidNetwork} from './liquid-network.js';
 import {createProject} from './state.js';
@@ -14,6 +15,9 @@ export async function loadThermo() {
   const response = await fetch(new URL('../thermo.json', import.meta.url));
   if (!response.ok) throw new Error('CEA-Datentabelle konnte nicht geladen werden.');
   const data = await response.json();
+  const catalogResponse = await fetch(new URL('../propellant-data.json', import.meta.url));
+  if (!catalogResponse.ok) throw new Error('Treibstoff-Datenkatalog konnte nicht geladen werden.');
+  data.catalog = await catalogResponse.json();
   if (data.format !== 'astroforge-thermo-grid' || data.version !== 1) throw new Error('Unbekanntes CEA-Datenformat.');
   return data;
 }
@@ -55,7 +59,6 @@ function inspectGraph(project,errors) {
     if(!['fuel','ox','gas','mechanical'].includes(n.medium))error(n,'Medium fehlt oder ist ungültig.');
     if(!n.params||typeof n.params!=='object')error(n,'Bauteilparameter fehlen.');
     if(n.section!=null && !['fuel','ox','cooling'].includes(n.section))error(n,'Unbekannte Section.');
-    if(n.section && n.section!=='cooling' && (n.medium!==n.section || !['line','turn','manifold','valve','sensor','pump','regen'].includes(n.type)))error(n,'Section und Bauteilmedium passen nicht zusammen.');
     if(n.type==='shaft'&&n.medium!=='mechanical')error(n,'Eine Welle benötigt das Medium mechanical.');
     if(n.medium==='mechanical'&&n.type!=='shaft')error(n,'Nur Wellen dürfen mechanische Knoten sein.');
     if(n.type==='regen'&&n.medium!=='fuel')error(n,'Das Kühlungsscreening ist nur im Brennstoffpfad verfügbar.');
@@ -129,8 +132,8 @@ function geometryFor(design,area){
   return {throatRadiusM:rt,exitRadiusM:re,chamberRadiusM:rc,chamberLengthM:chamberLength,nozzleLengthM:nozzleLength,contour};
 }
 
-function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,context=null){
-  const source=path[0],fluid=FLUIDS[medium],stations={},drops=new Map(),temperatures=new Map();
+function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,context=null,fluids=FLUIDS){
+  const source=path[0],fluid=fluids[medium],stations={},drops=new Map(),temperatures=new Map(),dynamicPressures=new Map();
   let temperature=source.params.temperatureK;
   const firstLine=path.find(n=>n.type==='line');let boreMm=firstLine.params.diameterMm;
   for(const node of path){
@@ -140,6 +143,7 @@ function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,
     const propertyPressure=context?staticPressureAt(context.data,temperature,localPressure,Math.PI*(localBore/1000)**2/4,mdot):localPressure;
     const liquid=context?coolantAt(context.data,temperature,propertyPressure):null;
     const localFluid=liquid?{rho:liquid.rhoKgM3,mu:liquid.muPaS}:fluid;
+    dynamicPressures.set(node.id,mdot**2/(2*localFluid.rho*(Math.PI*(localBore/1000)**2/4)**2)/1e5);
     let drop=0;
     if(['line','turn','manifold','valve'].includes(node.type)){
       if(node.type==='line')boreMm=node.params.diameterMm;
@@ -171,6 +175,7 @@ function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,
       cycle.cooling.push({nodeId:node.id,heatKW:node.params.heatKW,dropBar:drop,cpJkgK:node.params.cpJkgK,inletTemperatureK:temperature,outletTemperatureK:outletTemperature,massFlowKgS:mdot});
       if(outletTemperature>650)errors.push({nodeId:node.id,message:'Kühlmittel über 650 K: außerhalb des begrenzten Wärmebilanz-Screenings.'});
       temperature=outletTemperature;
+      if(fluid.minPressureBar&&!context&&(temperature<fluid.tMin||temperature>fluid.tMax))errors.push({nodeId:node.id,message:`${fluid.label}: Wärmebilanz verlässt den Stoff-Screeningbereich ${fluid.tMin}–${fluid.tMax} K.`});
     }
     drops.set(node.id,drop);
   }
@@ -178,6 +183,7 @@ function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,
   for(const node of [...path].reverse()){
     const drop=drops.get(node.id);pressure+=drop;
     if(pressure<=0)errors.push({nodeId:node.id,message:'Nicht positives Druckbudget: feste Pumpendruckerhöhung überbestimmt diesen Zielentwurf. Druckerhöhung reduzieren.'});
+    if(fluid.minPressureBar&&!context&&Math.min(pressure,pressure-drop)-dynamicPressures.get(node.id)<fluid.minPressureBar)errors.push({nodeId:node.id,message:`${fluid.label}: erforderlicher statischer Druck liegt unter der einphasigen Screeninggrenze (${fluid.minPressureBar} bar).`});
     stations[node.id]={pressureBar:pressure,temperatureK:temperatures.get(node.id),massFlowKgS:mdot,dropBar:drop};
   }
   const feed={requiredBar:pressure,availableBar:source.params.pressureBar,marginBar:source.params.pressureBar-pressure,massFlowKgS:mdot};
@@ -247,10 +253,10 @@ function evaluateCycle(graph,design,mdot,cycle,warnings,errors){
   return stations;
 }
 
-function solveExpandedProject(project,data,coolingData){
+function solveExpandedProject(project,data,coolingData,topology=project){
   const errors=[],warnings=[];
   if(!project||typeof project!=='object'||!project.design)return {ok:false,errors:[{message:'Kein gültiges Triebwerksprojekt.'}],warnings};
-  const design=project.design;
+  const design=project.design,fluids=data?.fluids||FLUIDS;
   validateNumber(design.thrustN,100,100000,'Zielschub [N]',null,errors);
   validateNumber(design.paBar,0,1.2,'Umgebungsdruck [bar]',null,errors);
   validateNumber(design.lstarM,0.2,3,'Charakteristische Länge [m]',null,errors);
@@ -259,12 +265,13 @@ function solveExpandedProject(project,data,coolingData){
   const graph=inspectGraph(project,errors);
   if(!graph||errors.length)return {ok:false,errors,warnings};
   for(const medium of ['fuel','ox']){
-    const fluid=FLUIDS[medium];
+    const fluid=fluids[medium];
     for(const node of graph.paths[medium]){
       const p=node.params;
       if(node.type==='source'){
         validateNumber(p.pressureBar,2,200,'Versorgungsdruck [bar]',node,errors);
         validateNumber(p.temperatureK,fluid.tMin,fluid.tMax,'Temperatur [K]',node,errors);
+        if(fluid.minPressureBar&&p.pressureBar<fluid.minPressureBar)errors.push({nodeId:node.id,message:`${fluid.label}: Versorgungsdruck unter der einphasigen Screeninggrenze (${fluid.minPressureBar} bar).`});
       }
       if(node.type==='line'){
         validateNumber(p.lengthM,0,100,'Leitungslänge [m]',node,errors);
@@ -296,24 +303,24 @@ function solveExpandedProject(project,data,coolingData){
       const pressures=Object.fromEntries(graph.paths.fuel.map(n=>[n.id,coolingData?.coolant?.axes?.pressureBar?.at(-1)??200]));let converged=false;
       for(let iteration=0;iteration<60;iteration++){
         const trialCycle={pumps:[],cooling:[]},trialWarnings=[],trialErrors=[];
-        const trial=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,trialErrors,trialWarnings,trialCycle,{pressures,data:coolingData,geometry,design,thermo,project});
+        const trial=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,trialErrors,trialWarnings,trialCycle,{pressures,data:coolingData,geometry,design,thermo,project:topology},fluids);
         if(trialErrors.length){errors.push(...trialErrors);break;}
         let residual=0;for(const [id,s] of Object.entries(trial.stations)){residual=Math.max(residual,Math.abs(pressures[id]-s.pressureBar));pressures[id]=.5*(pressures[id]+s.pressureBar);}
         if(residual<1e-5){fuelResult=trial;cycle.pumps.push(...trialCycle.pumps);cycle.cooling.push(...trialCycle.cooling);warnings.push(...trialWarnings);converged=true;break;}
       }
       if(!converged&&!errors.length)errors.push({message:'Gekoppeltes Kühlungs-Druckbudget konvergiert nicht.'});
       if(converged)for(const station of Object.values(fuelResult.stations))coolantAt(coolingData,station.temperatureK,station.pressureBar);
-      warnings.push('Kanalkühlung: stationäres 1D-Kanalmodell mit gewählter Strömungsrichtung mit n-Dodecan als RP-1-Ersatz. Bartz, rechteckige Kanäle und Rippen; keine Strahlung, Verkokung, Siedung oder Strukturlebensdauer. CEA-Gaszustand bleibt feste Randbedingung; Bartz mit frozen-Kammertransport und konstantem frozen-gamma, isentroper lokaler Machzahl und Recoverytemperatur; kein chemisch-thermischer Kreislaufschluss.');
-    }else fuelResult=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,errors,warnings,cycle);
+      warnings.push('Kanalkühlung: stationäres 1D-Kanalmodell mit gewählter Strömungsrichtung und ausgewiesenen Stoffdaten. Bartz, rechteckige Kanäle und Rippen; keine Strahlung, Verkokung, Siedung oder Strukturlebensdauer. CEA-Gaszustand bleibt feste Randbedingung; Bartz mit frozen-Kammertransport und konstantem frozen-gamma, isentroper lokaler Machzahl und Recoverytemperatur; kein chemisch-thermischer Kreislaufschluss.');
+    }else fuelResult=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,errors,warnings,cycle,null,fluids);
   }catch(e){errors.push({nodeId:graph.paths.fuel.find(n=>n.params.mode==='channels')?.id,message:e.message});}
   if(errors.length)return {ok:false,errors,warnings};
-  const oxResult=evaluateFeed(graph.paths.ox,'ox',ox,design.pcBar,graph.injector.params.oxDropBar,errors,warnings,cycle);
+  const oxResult=evaluateFeed(graph.paths.ox,'ox',ox,design.pcBar,graph.injector.params.oxDropBar,errors,warnings,cycle,null,fluids);
   const auxiliaryStations=evaluateCycle(graph,design,mdot,cycle,warnings,errors);
   if(errors.length)return {ok:false,errors,warnings};
   warnings.push('Idealer Vorentwurf: keine Verbrennungs-, Reibungs- oder Divergenzverluste; kein thermischer oder struktureller Nachweis.');
   warnings.push((channels?'Brennstoff mit temperatur- und druckabhängigen Ersatzstoffwerten; Oxidator mit konstanten Stoffwerten, ':'Versorgung mit konstanten Stoffwerten, ')+ ' außerhalb eines Kühlblocks isotherm; Pfaddrücke sind erforderliche Gesamtdruckbudgets am Zielbetriebspunkt, keine gelösten lokalen statischen Istdrücke. Höhenunterschiede werden nicht berücksichtigt.');
-  warnings.push('CEA-Reaktanten: RP-1 bei 298,15 K und LOX bei 90,18 K. Die einstellbaren Versorgungstemperaturen sind nicht an die CEA-Thermochemie gekoppelt.');
-  warnings.push((channels?'RP-1-Ersatz: CoolProp n-Dodecan, einphasig und nur innerhalb der Tabelle':FLUIDS.fuel.label)+'; '+FLUIDS.ox.label+'.');
+  warnings.push(`CEA-Reaktanten: ${getPair(design).label}; Tabellen-Eintrittszustände siehe Datenquelle. Die einstellbaren Versorgungstemperaturen sind nicht an die CEA-Thermochemie gekoppelt.`);
+  warnings.push((channels?`Kühlmittel: ${getPair(design).fuel==='rp1'?'n-Dodecan als RP-1-Ersatz':'Ethanol'}, einphasig und nur innerhalb der Tabelle`:fluids.fuel.label)+'; '+fluids.ox.label+'.');
   warnings.push('Ventilquerschnitt = Querschnitt der vorangehenden Leitung (ohne Vorgänger: erste Leitung im Pfad).');
   warnings.push('2D-Glockenkontur: glatte kubische Visualisierungsnäherung, keine Rao-/MoC-Auslegung. L* bezieht sich hier auf das zylindrische Kammervolumen.');
   if(design.paBar>thermo.peBar)warnings.push('Überexpandierte Düse: ideale anliegende Strömung angenommen; Ablösung wird in Lite nicht berechnet.');
@@ -321,13 +328,26 @@ function solveExpandedProject(project,data,coolingData){
     performance:{thrustN:design.thrustN,ispS:cf*thermo.cstarMS/G0,cstarMS:thermo.cstarMS,tcK:thermo.tcK,mdotKgS:mdot,fuelKgS:fuel,oxKgS:ox,cf},
     geometry,feeds:{fuel:fuelResult.feed,ox:oxResult.feed},
     stations:{...fuelResult.stations,...oxResult.stations,...auxiliaryStations,[graph.injector.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:null,fuelDropBar:graph.injector.params.fuelDropBar,oxDropBar:graph.injector.params.oxDropBar},[graph.chamber.id]:{pressureBar:design.pcBar,temperatureK:thermo.tcK,massFlowKgS:mdot,dropBar:0},[graph.nozzle.id]:{pressureBar:thermo.peBar,temperatureK:null,massFlowKgS:mdot,dropBar:null}},
-    meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,domain:'LOX/RP-1 · Gleichgewicht · pc 10–80 bar · O/F 2–3,2 · ε 4–40 · CEA-Interpolation ohne Extrapolation',interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:channels?'Darcy–Weisbach / Haaland; fuel n-dodecane T/p table, constant LOX':'Darcy–Weisbach / Haaland, konstante Stoffwerte',coolingModel:channels?'1D selectable flow and coverage, frozen chamber transport/Bartz, fixed gas boundary':null,coolingSource:channels?coolingData.source:null,pressureBasis:channels?'feed: required total-pressure budget; cooling: static pressure march plus dynamic conversion, no elevation':'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation',formulaSources:[{model:'Pump power',url:'https://www.energy.gov/sites/default/files/2014/05/f16/pump.pdf'},{model:'Ideal-gas turbine work',url:'https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html'},{model:'Nozzle expansion',url:'https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html'},{model:'Thrust and specific impulse',url:'https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/'}]}};
+    meta:{model:'Lite 2.0 · idealer stationärer Auslegungspunkt',source:data.source,feedFluids:Object.fromEntries(Object.entries(fluids).map(([medium,fluid])=>[medium,{...fluid,source:fluid.source||'Legacy constant screening properties; see MODELS.md'}])),coolantSource:channels?coolingData?.coolant?.source:null,domain:`${getPair(design).label} · Gleichgewicht · pc ${data.axes.pcBar[0]}–${data.axes.pcBar.at(-1)} bar · O/F ${data.axes.of[0]}–${data.axes.of.at(-1)} · ε ${data.axes.eps[0]}–${data.axes.eps.at(-1)} · CEA-Interpolation ohne Extrapolation`,propellantPair:getPair(design).id,interpolation:'c*, Cf, Tc trilinear; log(pe/pc) linear in pc, O/F and log(eps)',sampledValidation:data.validation,chamberModel:'infinite-area',reactants:data.reactants,feedModel:channels?'Darcy–Weisbach / Haaland; fuel T/p table, constant oxidizer screening properties':'Darcy–Weisbach / Haaland, konstante Stoffwerte',coolingModel:channels?'1D selectable flow and coverage, frozen chamber transport/Bartz, fixed gas boundary':null,coolingSource:channels?coolingData.source:null,pressureBasis:channels?'feed: required total-pressure budget; cooling: static pressure march plus dynamic conversion, no elevation':'feed: required total-pressure budget; local static pressure and elevation not solved',geometryModel:'smooth cubic visual bell approximation',formulaSources:[{model:'Pump power',url:'https://www.energy.gov/sites/default/files/2014/05/f16/pump.pdf'},{model:'Ideal-gas turbine work',url:'https://www.grc.nasa.gov/www/k-12/airplane/powtrbth.html'},{model:'Nozzle expansion',url:'https://www.grc.nasa.gov/WWW/K-12/airplane/nozzleh.html'},{model:'Thrust and specific impulse',url:'https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/specific-impulse/'}]}};
 }
 
 
 export function solveProject(project,data,coolingData){
+ try{
+  const pair=getPair(project?.design);
+  if(pair.id!=='lox-rp1'){
+   const selected=data?.catalog?.pairs?.[pair.id];
+   if(!selected||selected.pairId!==pair.id||!selected.fluids?.fuel||!selected.fluids?.ox)throw Error('Keine passenden Rechen- und Stoffdaten für '+pair.label+'.');
+   coolingData=data.catalog.cooling?.[pair.id];data={...selected,catalog:data.catalog};
+  }
+  if(project?.nodes?.some(n=>n?.type==='regen'&&n.params?.mode==='channels')){
+   if(!pair.channelCooling)throw Error('Kühlkanalmodell für '+pair.label+' noch nicht verfügbar. Wärmebilanzmodell oder Entwurf ohne Kanalkühlung verwenden.');
+   if(!coolingData)throw Error('Passende Kühlstoffdaten fehlen für '+pair.label+'.');
+  }
+ }catch(e){return {ok:false,errors:[{message:e.message}],warnings:[]};}
+
  if(!Array.isArray(project?.nodes)||!Array.isArray(project?.edges))return solveExpandedProject(project,data,coolingData);
- if(project.nodes.some(n=>['branch','restriction','consumer','coolantSource'].includes(n?.type)||n?.type==='manifold'&&project.edges.filter(e=>e?.from===n.id).length>1))return solveBranchedProject(project,data,coolingData);
+ if(project.nodes.filter(n=>n?.type==='regen'&&n.params?.mode==='channels').length>1||project.nodes.some(n=>['branch','restriction','consumer','coolantSource'].includes(n?.type)||n?.type==='manifold'&&project.edges.filter(e=>e?.from===n.id).length>1))return solveBranchedProject(project,data,coolingData);
  const expanded={...project,nodes:[...project.nodes],edges:[]},mapping=new Map();
  for(const e of project.edges){
   if(!e){expanded.edges.push(e);continue;}
@@ -339,7 +359,7 @@ export function solveProject(project,data,coolingData){
   expanded.nodes.push({id,type:'line',label:'Feedline',medium:from.medium,section:null,params:e.pipe});
   expanded.edges.push({...e,to:id},{id:'pipe-out:'+e.id,from:id,to:e.to});
  }
- const r=solveExpandedProject(expanded,data,coolingData);
+ const r=solveExpandedProject(expanded,data,coolingData,project);
  r.errors=(r.errors||[]).map(e=>mapping.has(e.nodeId)?{...e,nodeId:undefined,edgeId:mapping.get(e.nodeId)}:e);
  if(r.ok){
   r.edgeStates={};
@@ -361,13 +381,18 @@ function solveBranchedProject(project,data,coolingData){
  const errors=[],warnings=[];
  try{
   if(!Array.isArray(project.edges)||project.nodes.length>100||project.edges.length>150)throw Error('Ungültiges oder zu großes Netz.');
-  const ids=new Set(),edgeIds=new Set();for(const n of project.nodes){if(!n?.id||ids.has(n.id)||!n.params)throw Error('Ungültige oder doppelte Bauteile.');ids.add(n.id);}
+  const ids=new Set(),edgeIds=new Set();for(const n of project.nodes){if(!n?.id||ids.has(n.id)||!n.params)throw Error('Ungültige oder doppelte Bauteile.');if(n.section!=null&&!['fuel','ox','cooling'].includes(n.section))throw Error('Unbekannte Section.');ids.add(n.id);}
   for(const e of project.edges){if(!e?.id||edgeIds.has(e.id)||!ids.has(e.from)||!ids.has(e.to)||e.from===e.to)throw Error('Ungültige oder doppelte Verbindung.');edgeIds.add(e.id);}
   const singles={};for(const type of ['injector','chamber','nozzle']){const found=project.nodes.filter(n=>n.type===type);if(found.length!==1)throw Error('Genau ein '+type+' erforderlich.');singles[type]=found[0];if(found[0].medium!=='gas')throw Error('Triebwerksbauteile benötigen Heißgas als Medium.');}
   if(!project.edges.some(e=>e.from===singles.injector.id&&e.to===singles.chamber.id)||!project.edges.some(e=>e.from===singles.chamber.id&&e.to===singles.nozzle.id))throw Error('Injektor, Kammer und Düse müssen direkt verbunden sein.');
   const reference=createProject();reference.design=project.design;reference.nodes.find(n=>n.type==='injector').params=singles.injector.params;
+  for(const n of reference.nodes)if(n.type==='source')n.params.temperatureK=getFluid(getPair(project.design)[n.medium]).temperatureK;
+  // This reference computes only core thermochemistry/geometry; its artificial feed must not limit the real network.
+  for(const n of reference.nodes)if(n.type==='line')Object.assign(n.params,{diameterMm:200,lengthM:0,k:0});else if(n.type==='valve')n.params.k=0;
   const base=solveExpandedProject(reference,data,coolingData);if(!base.ok)return base;
-  const net=solveLiquidNetwork(project,base,coolingData),cycle={...net.cycles,turbines:[],shafts:[],consumers:net.consumers},shafts=project.nodes.filter(n=>n.type==='shaft');
+  const channelNodes=project.nodes.filter(n=>n.type==='regen'&&n.params.mode==='channels');
+  for(let i=0;i<channelNodes.length;i++)for(let j=i+1;j<channelNodes.length;j++){const a=coolingParams(project,channelNodes[i]),b=coolingParams(project,channelNodes[j]);if(Math.min(a.coolingEnd??1,b.coolingEnd??1)-Math.max(a.coolingStart??0,b.coolingStart??0)>1e-8)throw Error('Kühlstrecken überlappen: Mehrfachbelegung derselben Wandfläche ist noch nicht modelliert. Start/Ende der Strecken trennen.');}
+  const net=solveLiquidNetwork(project,base,coolingData,data.fluids||FLUIDS),cycle={...net.cycles,turbines:[],shafts:[],consumers:net.consumers},shafts=project.nodes.filter(n=>n.type==='shaft');
   const aux=project.nodes.filter(n=>['gasSource','turbine','exhaust'].includes(n.type));let auxiliary=null;
   if(aux.length){const source=aux.find(n=>n.type==='gasSource'),turbine=aux.find(n=>n.type==='turbine'),exhaust=aux.find(n=>n.type==='exhaust');if(aux.length!==3||!source||!turbine||!exhaust||!project.edges.some(e=>e.from===source.id&&e.to===turbine.id)||!project.edges.some(e=>e.from===turbine.id&&e.to===exhaust.id))throw Error('Treibgaszweig benötigt Quelle → Turbine → Abgasdüse.');auxiliary={source,turbine,exhaust};}
   const allowed=new Set(['source','coolantSource','line','valve','sensor','pump','regen','turn','manifold','branch','restriction','consumer','injector','chamber','nozzle','shaft','gasSource','turbine','exhaust']);
@@ -380,10 +405,9 @@ function solveBranchedProject(project,data,coolingData){
    const expectedIn=n.type==='injector'?2:['gasSource','shaft'].includes(n.type)?0:1,expectedOut=['nozzle','exhaust','shaft'].includes(n.type)?0:1;
    if(inc!==expectedIn||out!==expectedOut)throw Error('Offene oder zusätzliche Gas-/Wellenanschlüsse.');
   }
-  const channelNodes=project.nodes.filter(n=>n.type==='regen'&&n.params.mode==='channels');
-  for(let i=0;i<channelNodes.length;i++)for(let j=i+1;j<channelNodes.length;j++){const a=coolingParams(project,channelNodes[i]),b=coolingParams(project,channelNodes[j]);if(Math.min(a.coolingEnd??1,b.coolingEnd??1)-Math.max(a.coolingStart??0,b.coolingStart??0)>1e-8)throw Error('Kühlstrecken überlappen: Mehrfachbelegung derselben Wandfläche ist noch nicht modelliert. Start/Ende der Strecken trennen.');}
   const graph={paths:{fuel:[],ox:[]},shafts,auxiliary};validateExtended(graph,project.design,errors);if(errors.length)return {ok:false,errors,warnings};
-  warnings.push(...net.warnings);
+  warnings.push(...net.warnings,...base.warnings.filter(w=>['Idealer Vorentwurf:','CEA-Reaktanten:','2D-Glockenkontur:','Überexpandierte Düse:'].some(prefix=>w.startsWith(prefix))));
+  warnings.push(`Stoffmodell: ${getPair(project.design).label}; ${channelNodes.length?'Kühlmittel gemäß T/p-Tabelle, sonst konstante Screeningwerte':'konstante Screeningwerte'}. Eintrittstemperaturen verändern die CEA-Thermochemie nicht.`);
   const auxiliaryStations=evaluateCycle(graph,project.design,base.performance.mdotKgS,cycle,warnings,errors);if(errors.length)return {ok:false,errors,warnings};
   const stations={...net.station,...auxiliaryStations};for(const type of ['injector','chamber','nozzle'])stations[singles[type].id]=base.stations[type];
   const edgeStates={...net.edgeState};for(const e of project.edges)if(!edgeStates[e.id]){const s=stations[e.from],t=cycle.turbines.find(v=>v.nodeId===e.from);edgeStates[e.id]={pressureBar:t?.outletPressureBar??s?.pressureBar,temperatureK:t?.outletTemperatureK??s?.temperatureK,massFlowKgS:s?.massFlowKgS,dropBar:0};}
@@ -392,7 +416,7 @@ function solveBranchedProject(project,data,coolingData){
   warnings.push('Verzweigtes Bedarfsnetz: Teilströme werden durch Injektor und Verbraucher vorgegeben. Druckabgleich je Zweig separat ausgewiesen; keine automatisch gelöste passive Stromaufteilung.');
   if(!net.network.balanced)warnings.push('Zusätzlicher Druckabgleich erforderlich: Die vorgegebenen Teilströme benötigen die ausgewiesenen Zweig-Drosselverluste.');
   if(net.consumers.length)warnings.push('Verbraucher sind Massenstrom-/Druckrandbedingungen. Preburner- und Filmeinträge erzeugen keine Verbrennungsleistung, Filmwirkung oder zusätzlichen Schub.');
-  warnings.push('Kühlung: n-Dodecan als RP-1-Ersatz; feste CEA-Gasrandbedingung. Ungekühlte Bereiche, Filmwirksamkeit und Rückführschleifen werden nicht berechnet.');
-  return {...base,errors:[],warnings,cycle,stations,edgeStates,feeds:net.feeds,network:{...net.network,totalMassFlowKgS,systemIspS:systemThrustN/(totalMassFlowKgS*G0)},meta:{...base.meta,feedModel:'Directed liquid demand trees, required pressure budgets and explicit balancing losses',coolingSource:channelNodes.length?coolingData?.source:null,coolingModel:'Independent nonoverlapping co/counterflow segments with fixed hot-gas boundary'}};
+  warnings.push('Kühlung: ausgewiesene Stoffdaten; feste CEA-Gasrandbedingung. Ungekühlte Bereiche, Filmwirksamkeit und Rückführschleifen werden nicht berechnet.');
+  return {...base,errors:[],warnings,cycle,stations,edgeStates,feeds:net.feeds,network:{...net.network,totalMassFlowKgS,systemIspS:systemThrustN/(totalMassFlowKgS*G0)},meta:{...base.meta,feedModel:'Directed liquid demand trees, required pressure budgets and explicit balancing losses',coolantSource:channelNodes.length?coolingData?.coolant?.source:null,coolingSource:channelNodes.length?coolingData?.source:null,pressureBasis:channelNodes.length?'required total-pressure budgets; cooling static pressure march plus dynamic conversion':'required total-pressure budgets; constant-fluid static pressure screening',coolingModel:channelNodes.length?'Independent nonoverlapping co/counterflow segments with fixed hot-gas boundary':null}};
  }catch(e){return {ok:false,errors:[{nodeId:e.nodeId,message:e.message}],warnings};}
 }

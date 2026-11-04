@@ -1,3 +1,15 @@
+# Current contract: AstroForge Lite 2.5
+
+This section supersedes earlier version-specific assumptions below. Project version remains 1. Optional `design.propellantPair` identifies one of the eleven combinations in `src/propellants.js`; absent means legacy LOX/RP-1. Every nondefault pair requires its own CEA grid and feed properties from `public/propellant-data.json`. Unknown IDs or missing/mismatched data are errors, never an RP-1 fallback. Fuel/oxidizer roles remain `fuel`/`ox`; labels, O/F bounds and source temperatures derive from the selected pair. Pair changes reset O/F and all source temperatures explicitly and are undoable; geometry is retained.
+
+RP-1 and ethanol have bounded channel data for supported oxidizers. Methane, hydrogen and propane currently support thermochemistry and constant-property liquid-feed screening only; channel cooling with these fuels is rejected. HTP means exactly 90 mass-% peroxide / 10 mass-% water, not pure H2O2 and not a decomposition reactor. N2O feed assumes subcooled liquid around 250 K, not self-pressurization.
+
+Cooling is an independent display section. Multiple nonoverlapping channel intervals are supported. Direct manifolds set endpoints using the original graph, including when a connecting arrow carries pipe data. Branches sum prescribed terminal demands and report extra balancing losses. Consumers are boundary conditions, not preburner/film chemistry. No merges or recirculation.
+
+Feed properties and model provenance appear in result metadata. Newly introduced constant-property models use conservative temperature and pressure validity checks. This is a required-pressure design budget, not a passive off-design operating point. See MODELS.md, LOGIC-AUDIT.md and VALIDATION.md.
+
+---
+
 # Shared implementation contract
 
 ## Channel cooling (2.2; supersedes cooling restrictions below)

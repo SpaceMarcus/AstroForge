@@ -1,3 +1,4 @@
+import {getPair} from './propellants.js';
 import {ENGINE_TYPES,sectionOf} from './sections.js';
 const NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 152;
@@ -298,7 +299,7 @@ export class GraphEditor {
     if (node.type === 'valve') return p.open === false ? 'Geschlossen' : `Offen · K ${formatNumber(p.k)}`;
     if (node.type === 'chamber') return `${formatNumber(this.project.design?.pcBar)} bar · O/F ${formatNumber(this.project.design?.of, 2)}`;
     if (node.type === 'nozzle') return `Glocke · ε ${formatNumber(this.project.design?.eps)}`;
-    if (node.type === 'injector') return 'LOX + RP-1';
+    if (node.type === 'injector') return getPair(this.project.design).label;
     if (node.type === 'sensor') return ({ pressure: 'Druckmessstelle', temperature: 'Temperaturmessstelle', massflow: 'Massenstrommessstelle' })[p.quantity] || 'Virtuelle Messstelle';
     if (node.type === 'pump') return `Δp +${formatNumber(p.riseBar)} bar`;
     if (node.type === 'regen') return p.mode==='channels'?`${formatNumber(p.channelCount,0)} Kanäle · ${formatNumber(p.channelHeightMm)} mm`:`Q ${formatNumber(p.heatKW)} kW`;

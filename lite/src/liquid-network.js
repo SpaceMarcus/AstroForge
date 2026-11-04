@@ -9,7 +9,7 @@ function number(value,min,max,label,id){if(!Number.isFinite(value)||value<min||v
 
 // A directed forest with prescribed terminal demand. Pressure imbalance is reported,
 // never silently interpreted as a solved passive-network operating point.
-export function solveLiquidNetwork(project,base,data){
+export function solveLiquidNetwork(project,base,data,fluids){
  const nodes=project.nodes.filter(n=>LIQUID_TYPES.has(n.type)),map=new Map(nodes.map(n=>[n.id,n])),incoming=new Map(nodes.map(n=>[n.id,[]])),outgoing=new Map(nodes.map(n=>[n.id,[]]));
  const injector=project.nodes.find(n=>n.type==='injector'),injectorEdges=[];
  const edges=project.edges.filter(e=>map.has(e.from));
@@ -27,14 +27,16 @@ export function solveLiquidNetwork(project,base,data){
   if(inc!==(ROOTS.has(n.type)?0:1))fail('Ein Zulauf je Bauteil erforderlich; Zusammenführungen und Rückführkreise werden noch nicht gelöst.',n.id);
   if(n.type==='consumer'?out!==0:['branch','manifold'].includes(n.type)?out<1:out!==1)fail('Offener Anschluss oder Abzweigung ohne Branch/Manifold.',n.id);
   const p=n.params;
-  if(ROOTS.has(n.type)){number(p.pressureBar,2,200,'Versorgungsdruck [bar]',n.id);number(p.temperatureK,n.medium==='ox'?85:288,n.medium==='ox'?95:303,'Eintrittstemperatur [K]',n.id);}
-  if(n.type==='coolantSource'&&n.medium!=='fuel')fail('Separate Kühlversorgung unterstützt zunächst RP-1-Ersatzstoff.',n.id);
+  if(ROOTS.has(n.type)){number(p.pressureBar,2,200,'Versorgungsdruck [bar]',n.id);number(p.temperatureK,fluids[n.medium].tMin,fluids[n.medium].tMax,'Eintrittstemperatur [K]',n.id);}
+  if(ROOTS.has(n.type)&&fluids[n.medium].minPressureBar&&p.pressureBar<fluids[n.medium].minPressureBar)fail(`${fluids[n.medium].label}: Versorgungsdruck unter der einphasigen Screeninggrenze (${fluids[n.medium].minPressureBar} bar).`,n.id);
+  if(n.type==='coolantSource'&&n.medium!=='fuel')fail('Separate Kühlversorgung unterstützt den gewählten Brennstoff.',n.id);
   if(n.type==='consumer'){number(p.massFlowKgS,.0001,100,'Verbraucher-Massenstrom [kg/s]',n.id);number(p.pressureBar,1,200,'Benötigter Eintrittsdruck [bar]',n.id);}
   if(K_TYPES.has(n.type)){number(p.diameterMm,1,200,'Bezugsdurchmesser [mm]',n.id);number(p.k,0,10000,'Verlustbeiwert K',n.id);}
   if(n.type==='restriction'){number(p.upstreamDiameterMm,p.diameterMm,200,'Zulaufdurchmesser [mm]',n.id);}
   if(n.type==='pump'){number(p.riseBar,.01,150,'Pumpendruckerhöhung',n.id);number(p.efficiency,.05,1,'Pumpenwirkungsgrad',n.id);if(!project.nodes.some(s=>s.type==='shaft'&&s.id===p.shaftId))fail('Pumpe benötigt eine gültige Welle.',n.id);}
   if(n.type==='valve'){number(p.k,0,10000,'Ventil-K',n.id);if(p.open!==true)fail('Geschlossenes Ventil bei vorgegebenem Bedarf.',n.id);}
-  if(n.type==='regen'&&n.medium!=='fuel')fail('Kühlkanäle unterstützen zunächst RP-1-Ersatzstoff.',n.id);
+  if(n.type==='regen'&&p.mode!==undefined&&!['channels','lumped'].includes(p.mode))fail('Unbekanntes Kühlungsmodell.',n.id);
+  if(n.type==='regen'&&n.medium!=='fuel')fail('Kühlkanäle unterstützen nur den gewählten Brennstoff.',n.id);
   if(n.type==='sensor'&&!['pressure','temperature','massflow'].includes(p.quantity))fail('Unbekannte Messgröße.',n.id);
  }
  const roots=nodes.filter(n=>ROOTS.has(n.type)),order=[],visiting=new Set(),visited=new Set(),mass={},edgeMass={};
@@ -57,7 +59,7 @@ export function solveLiquidNetwork(project,base,data){
   }
   const fluid=(n,t,p,d,m)=>{
    if(typed[n.id]){const ps=staticPressureAt(data,t,p,Math.PI*(d/1000)**2/4,m),f=coolantAt(data,t,ps);return {rho:f.rhoKgM3,mu:f.muPaS};}
-   return n.medium==='ox'?{rho:1140,mu:2e-4}:{rho:810,mu:1.8e-3};
+   return fluids[n.medium];
   };
   const pipeLoss=(p,m,f,id)=>{
    number(p.lengthM,0,100,'Leitungslänge',id);number(p.diameterMm,1,200,'Leitungsdurchmesser',id);number(p.roughnessMm,0,Math.min(1,p.diameterMm/20),'Rauheit',id);number(p.k,0,10000,'Leitungs-K',id);
@@ -76,10 +78,11 @@ export function solveLiquidNetwork(project,base,data){
     if(p.mode==='channels'){const c=solveCooling({params:coolingParams(project,n),geometry:base.geometry,design:project.design,thermo:base.performance,data,massFlowKgS:m,inletTemperatureK:tin,inletPressureBar:pressure[n.id]});cycles.cooling.push({nodeId:n.id,...c});drop=c.dropBar;tout=c.outletTemperatureK;warnings.push(...c.warnings);}
     else {number(p.heatKW,0,5000,'Aufgeprägte Wärme',n.id);number(p.dropBar,0,100,'Kühldruckverlust',n.id);number(p.cpJkgK,100,10000,'Kühlmittel-cp',n.id);drop=p.dropBar;tout=tin+p.heatKW*1000/(m*p.cpJkgK);if(tout>650)fail('Kühlmittel außerhalb des Wärmebilanzmodells.',n.id);cycles.cooling.push({nodeId:n.id,heatKW:p.heatKW,dropBar:drop,inletTemperatureK:tin,outletTemperatureK:tout,massFlowKgS:m});}
    }
-   station[n.id]={temperatureK:tin,outletTemperatureK:tout,massFlowKgS:m,dropBar:drop,...extra};drops[n.id]=drop;
+   if(!typed[n.id]&&fluids[n.medium].minPressureBar&&(tout<fluids[n.medium].tMin||tout>fluids[n.medium].tMax))fail(`${fluids[n.medium].label}: Wärmebilanz verlässt den Stoff-Screeningbereich ${fluids[n.medium].tMin}–${fluids[n.medium].tMax} K.`,n.id);
+   station[n.id]={sourceId:rootFor[n.id],temperatureK:tin,outletTemperatureK:tout,massFlowKgS:m,dropBar:drop,dynamicPressureBar:m**2/(2*f.rho*(Math.PI*(d/1000)**2/4)**2)/1e5,...extra};drops[n.id]=drop;
    for(const e of outgoing.get(n.id)){
     const pipe=e.pipe||{lengthM:0,diameterMm:d,roughnessMm:0,k:0},ef=fluid(n,tout,edgePressure[e.id],pipe.diameterMm,edgeMass[e.id]);
-    const loss=pipeLoss(pipe,edgeMass[e.id],ef,n.id);edgeState[e.id]={...loss,massFlowKgS:edgeMass[e.id],temperatureK:tout,medium:n.medium};
+    const loss=pipeLoss(pipe,edgeMass[e.id],ef,n.id);edgeState[e.id]={...loss,massFlowKgS:edgeMass[e.id],temperatureK:tout,medium:n.medium,dynamicPressureBar:ef.rho*loss.velocityMS**2/2/1e5};
     if(map.has(e.to)){temperature[e.to]=tout;bore[e.to]=pipe.diameterMm;}
    }
   }
@@ -94,7 +97,14 @@ export function solveLiquidNetwork(project,base,data){
    }
    residual=Math.max(residual,Math.abs(pressure[n.id]-required[n.id]));pressure[n.id]=.5*(pressure[n.id]+required[n.id]);
   }
-  if(residual<1e-5){solved={station,edgeState,cycles,warnings,balance,required};break;}
+  if(residual<1e-5){
+   for(const n of nodes)if(!typed[n.id]&&fluids[n.medium].minPressureBar){
+    const f=fluids[n.medium],st=station[n.id];
+    if(Math.min(st.pressureBar,st.pressureBar-st.dropBar)-st.dynamicPressureBar<f.minPressureBar)fail(`${f.label}: erforderlicher statischer Druck liegt unter der einphasigen Screeninggrenze (${f.minPressureBar} bar).`,n.id);
+    for(const e of outgoing.get(n.id))if(edgeState[e.id].outletPressureBar-edgeState[e.id].dynamicPressureBar<f.minPressureBar)fail(`${f.label}: Leitungsaustritt liegt unter der einphasigen Screening-Druckgrenze.`,n.id);
+   }
+   solved={station,edgeState,cycles,warnings,balance,required};break;
+  }
  }
  if(!solved)fail('Verzweigtes Kühlungs-Druckbudget konvergiert nicht.');
  const feeds={};for(const root of roots){const requiredBar=solved.required[root.id];feeds[root.id]={label:root.label,medium:root.medium,requiredBar,availableBar:root.params.pressureBar,marginBar:root.params.pressureBar-requiredBar,massFlowKgS:mass[root.id]};}
