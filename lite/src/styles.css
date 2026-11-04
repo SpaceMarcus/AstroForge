@@ -653,3 +653,21 @@ body[data-view="analysis"] .inspector,body[data-view="analysis"] #results{displa
 .analysis-geometry svg{max-width:440px;width:100%;margin:20px auto}
 .analysis-empty{max-width:620px;padding:32px 0;color:var(--muted)}
 @media(max-width:899px){.analysis-inner{padding:20px 16px}.analysis-heading{flex-direction:column;gap:12px}.analysis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-metric{padding:14px}.analysis-metric strong{font-size:22px}.analysis-inner .table-scroll{max-width:100%;overflow:auto}}
+/* Review, local document versions and presentation chrome. */
+.review-nav{border-bottom:1px solid var(--border,#303b40);padding-bottom:12px;margin-bottom:16px}
+.review-save{display:flex;align-items:end;gap:12px;margin:24px 0}.review-save .field{flex:1;margin:0}
+.review-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.snapshot-card{padding:20px 0;border-top:1px solid #303b40}.snapshot-card h3{margin:0}.snapshot-card p{margin:6px 0;color:#a7b4bb}.snapshot-card small{overflow-wrap:anywhere}
+.review-empty{padding:32px 16px;border:1px dashed #47545a;margin:20px 0;color:#a7b4bb}
+.review-table{table-layout:fixed;min-width:480px}.review-table td,.review-table th{white-space:normal;overflow-wrap:anywhere;vertical-align:top}
+.review-components{list-style:none;padding:0}.review-components li{border-top:1px solid #303b40;padding:16px 0}.review-components li>div{display:flex;justify-content:space-between;gap:12px}.review-components p{overflow-wrap:anywhere}
+.presentation-bar{padding:12px 24px;border-bottom:1px solid #303b40;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#171e22}.presentation-bar[hidden]{display:none}.presentation-bar>span{font-size:11px;letter-spacing:.12em;color:#a7b4bb}.presentation-bar>div{display:flex;gap:8px;flex-wrap:wrap}
+body[data-presenting=true] .workspace{grid-template-columns:minmax(0,1fr)}
+body[data-presenting=true] .sidebar,body[data-presenting=true] .inspector,body[data-presenting=true] .header-actions,body[data-presenting=true] .results-strip,body[data-presenting=true] .mobile-nav,body[data-presenting=true] .stage-actions,body[data-presenting=true] .analysis-actions,body[data-presenting=true] .canvas-footer{display:none}
+body[data-presenting=true] #project-name{pointer-events:none}
+body[data-presenting=true] .analysis-inner{max-width:1200px}
+@media(max-width:899px){.review-save{align-items:stretch;flex-direction:column}.presentation-bar{padding:10px;flex-direction:column;align-items:start}.presentation-bar .button{min-height:44px}.review-components li>div{flex-wrap:wrap}.review-components .badge{white-space:normal}}
+
+body[data-presenting=true] .graph-controls,body[data-presenting=true] .graph-hint{display:none}
+
+body[data-presenting=true] [data-error-node],body[data-presenting=true] [data-error-edge]{display:none}

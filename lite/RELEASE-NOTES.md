@@ -1,3 +1,11 @@
+## 2.7.0 — Entwurfsverwaltung und Präsentation
+
+- Modell-/Ergebnisstatus pro Komponente mit direktem Sprung zum Inspector. Datenpräsenz wird nicht mit Validierung gleichgesetzt; veraltete Meldungen bleiben markiert.
+- Bis zu 30 lokale Entwurfsstände, benannt und mit Zeitstempel. Dokumentvergleich zum aktuellen Stand, Einzeldateien und Archivimport/-export.
+- Wiederherstellung sichert den aktuellen Entwurf zuerst; Ergebnisse werden verworfen. Speicherfehler verhindern die Wiederherstellung und werden angezeigt.
+- Präsentationsmodus für System und Analyse sowie herunterladbarer HTML-Projektbericht, über den Browser als PDF druckbar.
+- Keine Erweiterung, Neubenennung oder Validierung der physikalischen Modelle. Bestehende Modellgrenzen und Bezeichnungen bleiben bestehen.
+
 ## 2.6.0 — Analyse und getrennte Teilergebnisse
 
 - Eigene Analyse-Seite über die Navigation und die Ergebnisleiste, auch auf dem Handy.

@@ -1,5 +1,12 @@
 # AstroForge 2.0 Lite Prüfstand
 
+## Erweiterung 2.7 · Dokumentverwaltung und Präsentation
+
+118 bestehende und neue Softwaretests bestanden. Vier neue Tests decken unabhängige Snapshots, Serialisierung, Speicherfehler, Dokumentvergleich, fehlerhafte Archive, Archivkapazität und die Trennung von Datenpräsenz und Validierung ab. Dies erweitert keine physikalische Validierung.
+
+Browser: benannten Stand speichern, Projektname ändern, Änderung vergleichen, wiederherstellen mit automatischer Sicherung, Neuladen mit erhaltenem Archiv, Archiv exportieren und wieder importieren, Statuslink zum Inspector, HTML-Bericht herunterladen. Desktop und 390 × 844 geprüft; mobile Dialogbreite 356 px bei Dokumentbreite 390 px ohne Überlauf. Präsentation blendet Bearbeitung aus; keine Konsolenfehler im geprüften Ablauf.
+
+
 ## Erweiterung 2.6 · Analyse und Teilergebnisse
 
 4. November 2026. **114 automatisierte Tests bestanden.** Neue Tests prüfen Methan/H2/Propan mit nicht unterstützter Kanalkühlung, fehlende Stoffdaten und ungültige Entwurfsparameter sowie die Identität der idealen Kennwerte zwischen Voll- und Teilergebnis. Teilergebnisse ändern weder das Projekt noch den Fehlerstatus und enthalten keine vorgetäuschte Feed-Bilanz.
