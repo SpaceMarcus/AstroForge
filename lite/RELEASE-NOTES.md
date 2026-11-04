@@ -1,3 +1,14 @@
+## 2.4.0 — Cooling-Netz und Abzweige
+
+- Eigene Cooling-Section mit Brennstoff aus dem Feed-System oder separater RP-1-Kühlversorgung.
+- Abzweig, Verengung und Verbraucher mit Massenstrom- und Druckvorgabe; Kühlmittel kann nach dem Mantel zum Injektor und zu weiteren Verbrauchern abfließen.
+- Manifold-Position als axialer Slider mit lokalem ε. Direkt angeschlossene Kühlstrecken übernehmen die zugehörige Eintritts-/Austrittsgrenze.
+- Mehrere nicht überlappende Kühlstrecken mit getrennten Massenströmen und Gleich-/Gegenstrom.
+- Leitungstooltip mit erforderlichem Druckbudget, Knotendruck und zusätzlichem Zweig-Druckabgleich.
+- Neue Vorlagen „Kühlung & Abzweige“ und „Separate Kühlversorgung“.
+
+Teilströme sind vorgegeben, keine selbsttätig berechnete passive Stromaufteilung. Preburner und Film sind Verbraucherrandbedingungen ohne Verbrennungs-/Filmwirkung. Zusammenführungen, Rückführkreise und überlappende Kühlmäntel werden abgewiesen. Bestehende Serienprojekte behalten ihren Rechenweg.
+
 ## 2.3.0 — Engine section and edge-based feedlines
 
 - Engine section with contour, elongated jacket, axial coverage sliders and co-/counterflow.

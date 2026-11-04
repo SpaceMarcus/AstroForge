@@ -208,3 +208,16 @@ Die Tests prüfen Referenzwerte, Erhaltung der Massenströme, eine unabhängige 
 Der Datengenerator prüft alle 252 Zellmittelpunkte gegen zusätzliche direkte CEA-Aufrufe. Größte relative Abweichungen dieser Stichprobe: c* 0.184 %, Cf 0.429 %, Tc 0.464 %, pe 0.650 %. Die Daten enthalten die genauer gespeicherten Werte und die verwendete Backend-Version. Das sind **Stichprobenabweichungen**, keine mathematisch garantierten globalen Fehlergrenzen.
 
 Die erweiterten Module ergeben Komponenten- und Leistungsbudgets. Sie bilden keinen vollständig gekoppelten Gasgenerator-, Expander- oder Staged-Combustion-Cycle ab.
+
+
+## 2.4: Verzweigte Kühl- und Versorgungsnetze
+
+Das neue Netzmodell löst gerichtete Bäume mit genau einem Zulauf je Bauteil. Injektorbedarf stammt aus der Hauptauslegung; zusätzliche Verbraucher geben Massenstrom und benötigten Eintrittsgesamtdruck vor. Die rückwärts summierten Teilströme erfüllen die Massenbilanz. Temperaturen werden vorwärts transportiert, Kanalwärme und Verluste lokal berechnet. Erforderliche Druckbudgets werden rückwärts aufgestellt und mit zustandsabhängigen Stoffwerten iteriert (Druckresiduum < 1e-5 bar, höchstens 100 Iterationen).
+
+Am Abzweig wird der größte erforderliche Zweigdruck angesetzt. Die Differenz zu jedem anderen Zweig erscheint als zusätzlich notwendiger Drosselverlust. Dieser Verlust ist keine vorhandene Komponente und keine gelöste passive Stromaufteilung. Ohne passenden Druckabgleich sind die vorgeschriebenen Teilströme nicht als selbsttätiger Betriebspunkt nachgewiesen. Leitungseintrittsdruck im Tooltip bezeichnet den Zustand nach diesem hypothetischen Abgleich; der vorgelagerte Knotendruck wird separat angezeigt.
+
+Verengungen verwenden Δp = K ρ v²/2 mit Geschwindigkeit im Engpass. K wird vorgegeben, nicht aus dem Durchmesserverhältnis geschätzt. Der Zulaufdurchmesser darf nicht kleiner als der Engpass sein. Branch- und Manifold-K beziehen sich auf den gesamten Einlassstrom und den angegebenen Bezugsdurchmesser; Einzellasten der Verteilkanäle werden nicht separat aufgelöst.
+
+Separate Kühlversorgung verwendet denselben n-Dodecan-Ersatzstoff wie der Hauptbrennstoff. Eine direkte Manifold-Verbindung setzt den entsprechenden Kühlstreckenendpunkt auf seine axiale Position. Angezeigt wird ε = A(x)/At einschließlich „vor/nach Hals“, da ε allein die axiale Lage nicht eindeutig bestimmt. Nicht überlappende Teilstrecken können gleichzeitig gegen- und gleichsinnig durchströmt werden. Nicht gekühlte Wandbereiche werden thermisch nicht nachgewiesen.
+
+Verbraucher können als Preburner, Film oder sonstiger Auslass bezeichnet werden. Sie entnehmen Masse; es gibt keine Preburner-Chemie, Filmwärmeabschirmung oder Verbraucherschub. Der zusätzliche Massenverbrauch reduziert den ausgewiesenen System-Isp. Die bestehende vorgegebene Treibgasversorgung ist weiterhin unabhängig, keine thermochemische Kopplung zum Preburner-Verbraucher. Mischknoten, Rückführschleifen und überlappende Kühlflächen werden abgewiesen.

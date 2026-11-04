@@ -1,12 +1,12 @@
-const ENGINE_TYPES=['injector','chamber','nozzle'];
+import {ENGINE_TYPES,sectionOf} from './sections.js';
 const NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 152;
 const HEIGHT = 104;
-const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb', mechanical: '#c2a2ed', engine: '#b4bfcb' };
-const TYPE_NAMES = { source: 'VERSORGUNG', line: 'LEITUNG', turn: 'UMLENKUNG', manifold: 'MANIFOLD', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE', pump: 'PUMPE', regen: 'KÜHLKANAL', shaft: 'WELLE', gasSource: 'GASVERSORGUNG', turbine: 'TURBINE', exhaust: 'ABGASAUSLASS' };
+const COLORS = { fuel: '#f0b267', ox: '#62d6db', gas: '#b4bfcb', mechanical: '#c2a2ed', engine: '#b4bfcb', cooling: '#91c3a6' };
+const TYPE_NAMES = { source: 'VERSORGUNG', coolantSource:'KÜHLVERSORGUNG', branch:'ABZWEIG', restriction:'VERENGUNG', consumer:'VERBRAUCHER', line: 'LEITUNG', turn: 'UMLENKUNG', manifold: 'MANIFOLD', valve: 'VENTIL', injector: 'INJEKTOR', chamber: 'BRENNKAMMER', nozzle: 'DÜSE', sensor: 'MESSSTELLE', pump: 'PUMPE', regen: 'KÜHLKANAL', shaft: 'WELLE', gasSource: 'GASVERSORGUNG', turbine: 'TURBINE', exhaust: 'ABGASAUSLASS' };
 
 export function fluidPortsFor(type) {
-  return { input: !['source', 'gasSource', 'shaft'].includes(type), output: !['nozzle', 'exhaust', 'shaft'].includes(type) };
+  return { input: !['source', 'coolantSource', 'gasSource', 'shaft'].includes(type), output: !['nozzle', 'exhaust', 'consumer', 'shaft'].includes(type) };
 }
 
 export function mechanicalLinks(nodes) {
@@ -114,7 +114,7 @@ export class GraphEditor {
 
   listen(type, fn, extra = {}) { this.svg.addEventListener(type, fn, { ...extra, signal: this.abort.signal }); }
   aspect() { return Math.max(.25, this.root.clientWidth / Math.max(1, this.root.clientHeight)); }
-  visibleNodes() { return this.project.nodes.filter(n => !this.options.section || (this.options.section==='engine'?ENGINE_TYPES.includes(n.type):n.section === this.options.section)); }
+  visibleNodes() { return this.project.nodes.filter(n => !this.options.section || sectionOf(n) === this.options.section); }
   point(event) {
     const rect = this.svg.getBoundingClientRect();
     return { x: this.view.x + (event.clientX - rect.left) / rect.width * this.view.width, y: this.view.y + (event.clientY - rect.top) / rect.height * this.view.height };
@@ -168,15 +168,15 @@ export class GraphEditor {
     const nodeMap = new Map(this.project.nodes.map(n => [n.id, n]));
     this.hint.textContent = this.pendingFrom ? 'Ausgang gewählt · Zielanschluss antippen · Esc zum Abbrechen' : this.selectedEdge ? 'Verbindung gewählt · × oder Entf zum Entfernen' : 'Bauteil auswählen · Anschlüsse verbinden · Hintergrund verschieben';
     if (!this.options.section) {
-      for (const section of ['ox', 'fuel', 'engine']) {
-        const sectionNodes = nodes.filter(n => section==='engine'?ENGINE_TYPES.includes(n.type):n.section === section).map(n => this.position(n));
+      for (const section of ['ox', 'fuel', 'engine', 'cooling']) {
+        const sectionNodes = nodes.filter(n => sectionOf(n) === section).map(n => this.position(n));
         if (!sectionNodes.length) continue;
         const b = nodeBounds(sectionNodes);
         const group = svg('g', { 'data-section': section });
         group.append(svg('rect', { x: b.x - 24, y: b.y - 48, width: b.width + 48, height: b.height + 72, rx: 12, fill: COLORS[section], 'fill-opacity': .025, stroke: COLORS[section], 'stroke-opacity': .23, 'stroke-dasharray': '5 5' }));
-        const link = svg('g', { class: 'graph-section-link', role: 'button', tabindex: 0, 'aria-label': `${section === 'engine' ? 'Triebwerks' : section === 'ox' ? 'Oxidator' : 'Brennstoff'}-Section öffnen`, 'data-section-open': section });
+        const link = svg('g', { class: 'graph-section-link', role: 'button', tabindex: 0, 'aria-label': `${section === 'cooling' ? 'Cooling' : section === 'engine' ? 'Triebwerks' : section === 'ox' ? 'Oxidator' : 'Brennstoff'}-Section öffnen`, 'data-section-open': section });
         link.append(svg('rect', { x: b.x - 10, y: b.y - 46, width: 190, height: 36, rx: 4, fill: '#10181d' }));
-        link.append(svg('text', { x: b.x, y: b.y - 24, fill: COLORS[section], 'font-size': 10, 'font-weight': 600, 'letter-spacing': '1.1' }, section === 'engine' ? 'TRIEBWERK · SECTION ↗' : section === 'ox' ? 'OXIDATOR · SECTION ↗' : 'BRENNSTOFF · SECTION ↗'));
+        link.append(svg('text', { x: b.x, y: b.y - 24, fill: COLORS[section], 'font-size': 10, 'font-weight': 600, 'letter-spacing': '1.1' }, section === 'cooling' ? 'COOLING · SECTION ↗' : section === 'engine' ? 'TRIEBWERK · SECTION ↗' : section === 'ox' ? 'OXIDATOR · SECTION ↗' : 'BRENNSTOFF · SECTION ↗'));
         group.append(link); this.scene.append(group);
       }
     }
@@ -310,11 +310,17 @@ export class GraphEditor {
   drawSymbol(g, node) {
     const append = (tag, attrs) => g.append(svg(tag, attrs));
     switch (node.type) {
+      case 'coolantSource':
       case 'source':
         append('rect', { x: 5, y: 1, width: 25, height: 30, rx: 10 });
         append('path', { d: 'M 5 12 Q 17 18 30 12 M 30 19 H 38 M 10 34 H 25' }); break;
+      case 'consumer':
+        g.append(svg('circle',{cx:12,cy:12,r:10}),svg('path',{d:'M7 7L17 17M17 7L7 17'}));return;
+      case 'restriction':
+        g.append(svg('path',{d:'M0 2L10 8H22M0 22L10 16H22'}));return;
       case 'turn':
         g.append(svg('path',{d:'M2 19V8Q2 2 8 2H24 M19 -2L24 2L19 6'}));return;
+      case 'branch':
       case 'manifold':
         g.append(svg('path',{d:'M2 12H10V2H23 M10 12H23 M10 12V22H23'}));return;
       case 'line':

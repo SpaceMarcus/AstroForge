@@ -1,12 +1,15 @@
 import {CHANNEL_DEFAULTS} from './cooling-config.js';
-export const TYPES = {source:'Versorgung',line:'Leitung',turn:'Umlenkung',manifold:'Manifold',valve:'Ventil',sensor:'Messstelle',pump:'Pumpe',regen:'Regenerativkühlung',shaft:'Welle / Antrieb',gasSource:'Treibgasquelle',turbine:'Turbine',exhaust:'Abgasdüse',injector:'Injektor',chamber:'Brennkammer',nozzle:'Glockendüse'};
+export const TYPES = {source:'Versorgung',coolantSource:'Kühlmittelversorgung',branch:'Abzweig',restriction:'Verengung',consumer:'Verbraucher / Preburner',line:'Leitung',turn:'Umlenkung',manifold:'Manifold',valve:'Ventil',sensor:'Messstelle',pump:'Pumpe',regen:'Regenerativkühlung',shaft:'Welle / Antrieb',gasSource:'Treibgasquelle',turbine:'Turbine',exhaust:'Abgasdüse',injector:'Injektor',chamber:'Brennkammer',nozzle:'Glockendüse'};
 export const DEFAULT_PARAMS = {
- turn:{diameterMm:18,k:1.5},manifold:{diameterMm:18,k:1},
+ coolantSource:{pressureBar:60,temperatureK:293.15},branch:{diameterMm:18,k:0},restriction:{upstreamDiameterMm:18,diameterMm:10,k:1},consumer:{massFlowKgS:.2,pressureBar:25,purpose:'preburner'},
+ turn:{diameterMm:18,k:1.5},manifold:{diameterMm:18,k:1,axialPosition:.5},
  source:{pressureBar:55,temperatureK:293.15},line:{lengthM:1,diameterMm:20,roughnessMm:.01,k:.5},valve:{k:2,open:true},sensor:{quantity:'pressure'},injector:{fuelDropBar:6,oxDropBar:6},
  pump:{riseBar:30,efficiency:.7,shaftId:''},regen:{...CHANNEL_DEFAULTS},shaft:{efficiency:.96,rpm:30000,motorKW:30},
  gasSource:{pressureBar:30,temperatureK:900,massFlowKgS:.15,cpJkgK:2200,gamma:1.25},turbine:{outletBar:2,efficiency:.7,shaftId:''},exhaust:{exitBar:1.01325,efficiency:.95},chamber:{},nozzle:{}
 };
 export const TEMPLATES = [
+ {id:'cooling-network',name:'AF–04 / Cooling network',tag:'04 · BRANCHES',title:'Kühlung & Abzweige',description:'Eigene Cooling-Section, Kühlmantel und Abzweig zum Injektor und einem Preburner-Verbraucher.'},
+ {id:'cooling-external',name:'AF–05 / Separate cooling supply',tag:'05 · COOLING SUPPLY',title:'Separate Kühlversorgung',description:'Unabhängige RP-1-Kühlversorgung mit eigenem Austrittsverbraucher.'},
  {id:'pressure',name:'AF–01 / Pressure-fed',tag:'01 · BASELINE',title:'Druckgefördert',description:'Zwei Versorgungspfade. Der klare Einstieg in deinen Triebwerksentwurf.'},
  {id:'electric',name:'AF–02 / Electric + Regen',tag:'02 · ELECTRIC',title:'Pumpen & Kühlung',description:'Zwei Pumpen, gemeinsamer elektrischer Antrieb und geometrisch definierte Kühlkanäle.'},
  {id:'turbine',name:'AF–03 / Turbine drive',tag:'03 · TURBINE',title:'Turbine & Abgasdüse',description:'Turbinenantrieb, Wellenbilanz und zweite Düse mit vorgegebenem Treibgasstrom.'}
@@ -39,7 +42,7 @@ export function createTemplate(id='pressure') {
  const add=(nodeId,type,label,medium,section,x,y,params={})=>{p.nodes.push({id:nodeId,type,label,medium,section,x,y,params:{...DEFAULT_PARAMS[type],...params}});};
  const insert=(from,to,nodeId)=>{p.edges=p.edges.filter(e=>!(e.from===from&&e.to===to));p.edges.push({id:from+'-to-'+nodeId,from,to:nodeId},{id:nodeId+'-to-'+to,from:nodeId,to});};
  p.nodes.forEach(n=>{if(n.type==='source')n.params.pressureBar=20;if(n.x>=480)n.x+=230;if(n.x>=950)n.x+=210;});
- add('drive','shaft',id==='electric'?'Elektrischer Antrieb':'Turbowelle','mechanical',null,490,-170,{motorKW:id==='electric'?30:0});
+ add('drive','shaft',id!=='turbine'?'Elektrischer Antrieb':'Turbowelle','mechanical',null,490,-170,{motorKW:id!=='turbine'?30:0});
  for(const medium of ['fuel','ox']){add(medium+'-pump','pump',medium==='ox'?'LOX Pumpe':'RP-1 Pumpe',medium,medium,480,medium==='ox'?90:350,{shaftId:'drive'});insert(medium+'-line',medium+'-valve',medium+'-pump');}
  add('regen','regen','Kühlmantel · Kanäle','fuel','fuel',930,350,{channelHeightMm:.75});insert('fuel-valve','injector','regen');
  if(id==='turbine'){
@@ -47,6 +50,22 @@ export function createTemplate(id='pressure') {
   add('turbine','turbine','Antriebsturbine','gas',null,490,-420,{shaftId:'drive'});
   add('exhaust','exhaust','Turbinen-Abgasdüse','gas',null,940,-420);
   p.edges.push({id:'gas-to-turbine',from:'drive-gas',to:'turbine'},{id:'turbine-to-exhaust',from:'turbine',to:'exhaust'});
+ }
+ if(id.startsWith('cooling-')){
+  const regen=p.nodes.find(n=>n.id==='regen');regen.section='cooling';regen.x=650;regen.y=650;
+  add('cool-outlet','consumer','Preburner · Brennstoffbedarf','fuel','cooling',1120,820);
+  if(id==='cooling-network'){
+   p.nodes.find(n=>n.id==='fuel-source').params.pressureBar=40;
+   add('cool-split','branch','Kühlmittel-Abzweig','fuel','cooling',900,650);
+   const e=p.edges.find(e=>e.from==='regen');e.to='cool-split';p.edges.push({id:'cool-to-main',from:'cool-split',to:'injector'},{id:'cool-to-consumer',from:'cool-split',to:'cool-outlet'});
+  }else{
+   p.edges.find(e=>e.to==='regen').to='injector';p.edges.find(e=>e.from==='regen').to='cool-outlet';
+   add('cool-source','coolantSource','Separate RP-1-Kühlversorgung','fuel','cooling',180,650,{pressureBar:100});
+   add('cool-manifold','manifold','Eintrittsmanifold','fuel','cooling',420,650,{axialPosition:1});
+   p.nodes.find(n=>n.id==='cool-outlet').label='Kühlmittel-Auslass';
+    p.nodes.find(n=>n.id==='cool-outlet').params={massFlowKgS:2,pressureBar:30,purpose:'other'};
+   p.edges.push({id:'cool-source-manifold',from:'cool-source',to:'cool-manifold'},{id:'cool-manifold-regen',from:'cool-manifold',to:'regen'});
+  }
  }
  return p;
 }
@@ -58,7 +77,7 @@ export function parseProject(text) {
   for(const key of ['thrustN','pcBar','of','eps','paBar','lstarM','contractionRatio']) if(!Number.isFinite(p.design[key])) throw Error('Ungültiger Entwurfswert: '+key);
   const ids=new Set();
   for(const n of p.nodes){
-    if(!n||typeof n.id!=='string'||!/^[\w-]{1,80}$/.test(n.id)||ids.has(n.id)||!Object.hasOwn(TYPES,n.type)||typeof n.label!=='string'||n.label.length>80||!['fuel','ox','gas','mechanical'].includes(n.medium)||![null,'fuel','ox'].includes(n.section)||!Number.isFinite(n.x)||!Number.isFinite(n.y)||Math.abs(n.x)>1e5||Math.abs(n.y)>1e5||!n.params||typeof n.params!=='object'||Array.isArray(n.params)) throw Error('Ungültige oder doppelte Komponente.');
+    if(!n||typeof n.id!=='string'||!/^[\w-]{1,80}$/.test(n.id)||ids.has(n.id)||!Object.hasOwn(TYPES,n.type)||typeof n.label!=='string'||n.label.length>80||!['fuel','ox','gas','mechanical'].includes(n.medium)||![null,'fuel','ox','cooling'].includes(n.section)||!Number.isFinite(n.x)||!Number.isFinite(n.y)||Math.abs(n.x)>1e5||Math.abs(n.y)>1e5||!n.params||typeof n.params!=='object'||Array.isArray(n.params)) throw Error('Ungültige oder doppelte Komponente.');
     for(const value of Object.values(n.params)) if(!['number','boolean','string'].includes(typeof value)||(typeof value==='number'&&!Number.isFinite(value))) throw Error('Ungültige Komponentenparameter.');
     if(['__proto__','prototype','constructor'].includes(n.id))throw Error('Reservierte Komponenten-ID.');
     ids.add(n.id);

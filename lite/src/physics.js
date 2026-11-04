@@ -1,3 +1,6 @@
+import {coolingParams} from './cooling-layout.js';
+import {solveLiquidNetwork} from './liquid-network.js';
+import {createProject} from './state.js';
 import {coolantAt,staticPressureAt,solveCooling,CHANNEL_BOUNDS} from './cooling.js';
 /** Bounded ideal predesign, not a transient or general network solver. */
 const G0 = 9.80665;
@@ -51,8 +54,8 @@ function inspectGraph(project,errors) {
     if(!TYPES.has(n.type))error(n,'Dieser Bauteiltyp wird in Lite nicht unterstützt.');
     if(!['fuel','ox','gas','mechanical'].includes(n.medium))error(n,'Medium fehlt oder ist ungültig.');
     if(!n.params||typeof n.params!=='object')error(n,'Bauteilparameter fehlen.');
-    if(n.section!=null && !['fuel','ox'].includes(n.section))error(n,'Unbekannte Section.');
-    if(n.section && (n.medium!==n.section || !['line','turn','manifold','valve','sensor','pump','regen'].includes(n.type)))error(n,'Section und Bauteilmedium passen nicht zusammen.');
+    if(n.section!=null && !['fuel','ox','cooling'].includes(n.section))error(n,'Unbekannte Section.');
+    if(n.section && n.section!=='cooling' && (n.medium!==n.section || !['line','turn','manifold','valve','sensor','pump','regen'].includes(n.type)))error(n,'Section und Bauteilmedium passen nicht zusammen.');
     if(n.type==='shaft'&&n.medium!=='mechanical')error(n,'Eine Welle benötigt das Medium mechanical.');
     if(n.medium==='mechanical'&&n.type!=='shaft')error(n,'Nur Wellen dürfen mechanische Knoten sein.');
     if(n.type==='regen'&&n.medium!=='fuel')error(n,'Das Kühlungsscreening ist nur im Brennstoffpfad verfügbar.');
@@ -158,7 +161,7 @@ function evaluateFeed(path,medium,mdot,pcBar,injectorDrop,errors,warnings,cycle,
       cycle.pumps.push({nodeId:node.id,shaftId:node.params.shaftId,pressureRiseBar:node.params.riseBar,hydraulicPowerKW,shaftPowerKW:hydraulicPowerKW/node.params.efficiency,massFlowKgS:mdot});
     }
     if(node.type==='regen'&&node.params.mode==='channels'){
-      const result=solveCooling({params:node.params,geometry:context.geometry,design:context.design,thermo:context.thermo,data:context.data,massFlowKgS:mdot,inletTemperatureK:temperature,inletPressureBar:localPressure});
+      const result=solveCooling({params:context.project?coolingParams(context.project,node):node.params,geometry:context.geometry,design:context.design,thermo:context.thermo,data:context.data,massFlowKgS:mdot,inletTemperatureK:temperature,inletPressureBar:localPressure});
       cycle.cooling.push({nodeId:node.id,...result});drop=result.dropBar;temperature=result.outletTemperatureK;
       warnings.push(...result.warnings);if(!result.feasible)warnings.push('Kühlkanal: zulässige Wandtemperatur überschritten.');
     }
@@ -293,7 +296,7 @@ function solveExpandedProject(project,data,coolingData){
       const pressures=Object.fromEntries(graph.paths.fuel.map(n=>[n.id,coolingData?.coolant?.axes?.pressureBar?.at(-1)??200]));let converged=false;
       for(let iteration=0;iteration<60;iteration++){
         const trialCycle={pumps:[],cooling:[]},trialWarnings=[],trialErrors=[];
-        const trial=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,trialErrors,trialWarnings,trialCycle,{pressures,data:coolingData,geometry,design,thermo});
+        const trial=evaluateFeed(graph.paths.fuel,'fuel',fuel,design.pcBar,graph.injector.params.fuelDropBar,trialErrors,trialWarnings,trialCycle,{pressures,data:coolingData,geometry,design,thermo,project});
         if(trialErrors.length){errors.push(...trialErrors);break;}
         let residual=0;for(const [id,s] of Object.entries(trial.stations)){residual=Math.max(residual,Math.abs(pressures[id]-s.pressureBar));pressures[id]=.5*(pressures[id]+s.pressureBar);}
         if(residual<1e-5){fuelResult=trial;cycle.pumps.push(...trialCycle.pumps);cycle.cooling.push(...trialCycle.cooling);warnings.push(...trialWarnings);converged=true;break;}
@@ -324,6 +327,7 @@ function solveExpandedProject(project,data,coolingData){
 
 export function solveProject(project,data,coolingData){
  if(!Array.isArray(project?.nodes)||!Array.isArray(project?.edges))return solveExpandedProject(project,data,coolingData);
+ if(project.nodes.some(n=>['branch','restriction','consumer','coolantSource'].includes(n?.type)||n?.type==='manifold'&&project.edges.filter(e=>e?.from===n.id).length>1))return solveBranchedProject(project,data,coolingData);
  const expanded={...project,nodes:[...project.nodes],edges:[]},mapping=new Map();
  for(const e of project.edges){
   if(!e){expanded.edges.push(e);continue;}
@@ -350,4 +354,45 @@ export function solveProject(project,data,coolingData){
   }
  }
  return r;
+}
+
+
+function solveBranchedProject(project,data,coolingData){
+ const errors=[],warnings=[];
+ try{
+  if(!Array.isArray(project.edges)||project.nodes.length>100||project.edges.length>150)throw Error('Ungültiges oder zu großes Netz.');
+  const ids=new Set(),edgeIds=new Set();for(const n of project.nodes){if(!n?.id||ids.has(n.id)||!n.params)throw Error('Ungültige oder doppelte Bauteile.');ids.add(n.id);}
+  for(const e of project.edges){if(!e?.id||edgeIds.has(e.id)||!ids.has(e.from)||!ids.has(e.to)||e.from===e.to)throw Error('Ungültige oder doppelte Verbindung.');edgeIds.add(e.id);}
+  const singles={};for(const type of ['injector','chamber','nozzle']){const found=project.nodes.filter(n=>n.type===type);if(found.length!==1)throw Error('Genau ein '+type+' erforderlich.');singles[type]=found[0];if(found[0].medium!=='gas')throw Error('Triebwerksbauteile benötigen Heißgas als Medium.');}
+  if(!project.edges.some(e=>e.from===singles.injector.id&&e.to===singles.chamber.id)||!project.edges.some(e=>e.from===singles.chamber.id&&e.to===singles.nozzle.id))throw Error('Injektor, Kammer und Düse müssen direkt verbunden sein.');
+  const reference=createProject();reference.design=project.design;reference.nodes.find(n=>n.type==='injector').params=singles.injector.params;
+  const base=solveExpandedProject(reference,data,coolingData);if(!base.ok)return base;
+  const net=solveLiquidNetwork(project,base,coolingData),cycle={...net.cycles,turbines:[],shafts:[],consumers:net.consumers},shafts=project.nodes.filter(n=>n.type==='shaft');
+  const aux=project.nodes.filter(n=>['gasSource','turbine','exhaust'].includes(n.type));let auxiliary=null;
+  if(aux.length){const source=aux.find(n=>n.type==='gasSource'),turbine=aux.find(n=>n.type==='turbine'),exhaust=aux.find(n=>n.type==='exhaust');if(aux.length!==3||!source||!turbine||!exhaust||!project.edges.some(e=>e.from===source.id&&e.to===turbine.id)||!project.edges.some(e=>e.from===turbine.id&&e.to===exhaust.id))throw Error('Treibgaszweig benötigt Quelle → Turbine → Abgasdüse.');auxiliary={source,turbine,exhaust};}
+  const allowed=new Set(['source','coolantSource','line','valve','sensor','pump','regen','turn','manifold','branch','restriction','consumer','injector','chamber','nozzle','shaft','gasSource','turbine','exhaust']);
+  for(const n of project.nodes){if(!allowed.has(n.type))throw Error('Unbekannter Bauteiltyp.');if(['pump','turbine'].includes(n.type)&&!shafts.some(v=>v.id===n.params.shaftId))throw Error('Antriebsmaschine benötigt gültige Welle.');if(n.type==='shaft'&&!project.nodes.some(v=>['pump','turbine'].includes(v.type)&&v.params.shaftId===n.id))throw Error('Nicht verwendete Welle.');}
+  // Gas and shaft connections must not bypass the explicitly modelled chain.
+  for(const e of project.edges)if(e.pipe&&!['fuel','ox'].includes(project.nodes.find(n=>n.id===e.from).medium))throw Error('Feedline-Druckverluste werden derzeit nur für flüssigen Brennstoff und Oxidator berechnet.');
+  for(const n of [...Object.values(singles),...aux,...shafts]){
+   if(n.medium!==(n.type==='shaft'?'mechanical':'gas'))throw Error('Falsches Medium an Gas- oder Wellenbauteil.');
+   const inc=project.edges.filter(e=>e.to===n.id).length,out=project.edges.filter(e=>e.from===n.id).length;
+   const expectedIn=n.type==='injector'?2:['gasSource','shaft'].includes(n.type)?0:1,expectedOut=['nozzle','exhaust','shaft'].includes(n.type)?0:1;
+   if(inc!==expectedIn||out!==expectedOut)throw Error('Offene oder zusätzliche Gas-/Wellenanschlüsse.');
+  }
+  const channelNodes=project.nodes.filter(n=>n.type==='regen'&&n.params.mode==='channels');
+  for(let i=0;i<channelNodes.length;i++)for(let j=i+1;j<channelNodes.length;j++){const a=coolingParams(project,channelNodes[i]),b=coolingParams(project,channelNodes[j]);if(Math.min(a.coolingEnd??1,b.coolingEnd??1)-Math.max(a.coolingStart??0,b.coolingStart??0)>1e-8)throw Error('Kühlstrecken überlappen: Mehrfachbelegung derselben Wandfläche ist noch nicht modelliert. Start/Ende der Strecken trennen.');}
+  const graph={paths:{fuel:[],ox:[]},shafts,auxiliary};validateExtended(graph,project.design,errors);if(errors.length)return {ok:false,errors,warnings};
+  warnings.push(...net.warnings);
+  const auxiliaryStations=evaluateCycle(graph,project.design,base.performance.mdotKgS,cycle,warnings,errors);if(errors.length)return {ok:false,errors,warnings};
+  const stations={...net.station,...auxiliaryStations};for(const type of ['injector','chamber','nozzle'])stations[singles[type].id]=base.stations[type];
+  const edgeStates={...net.edgeState};for(const e of project.edges)if(!edgeStates[e.id]){const s=stations[e.from],t=cycle.turbines.find(v=>v.nodeId===e.from);edgeStates[e.id]={pressureBar:t?.outletPressureBar??s?.pressureBar,temperatureK:t?.outletTemperatureK??s?.temperatureK,massFlowKgS:s?.massFlowKgS,dropBar:0};}
+  const totalMassFlowKgS=net.network.totalSourceMassFlowKgS+(auxiliary?.source.params.massFlowKgS??0),systemThrustN=project.design.thrustN+(cycle.auxiliary?.thrustN??0);
+  if(cycle.auxiliary)Object.assign(cycle.auxiliary,{totalMassFlowKgS,systemIspS:systemThrustN/(totalMassFlowKgS*G0)});
+  warnings.push('Verzweigtes Bedarfsnetz: Teilströme werden durch Injektor und Verbraucher vorgegeben. Druckabgleich je Zweig separat ausgewiesen; keine automatisch gelöste passive Stromaufteilung.');
+  if(!net.network.balanced)warnings.push('Zusätzlicher Druckabgleich erforderlich: Die vorgegebenen Teilströme benötigen die ausgewiesenen Zweig-Drosselverluste.');
+  if(net.consumers.length)warnings.push('Verbraucher sind Massenstrom-/Druckrandbedingungen. Preburner- und Filmeinträge erzeugen keine Verbrennungsleistung, Filmwirkung oder zusätzlichen Schub.');
+  warnings.push('Kühlung: n-Dodecan als RP-1-Ersatz; feste CEA-Gasrandbedingung. Ungekühlte Bereiche, Filmwirksamkeit und Rückführschleifen werden nicht berechnet.');
+  return {...base,errors:[],warnings,cycle,stations,edgeStates,feeds:net.feeds,network:{...net.network,totalMassFlowKgS,systemIspS:systemThrustN/(totalMassFlowKgS*G0)},meta:{...base.meta,feedModel:'Directed liquid demand trees, required pressure budgets and explicit balancing losses',coolingSource:channelNodes.length?coolingData?.source:null,coolingModel:'Independent nonoverlapping co/counterflow segments with fixed hot-gas boundary'}};
+ }catch(e){return {ok:false,errors:[{nodeId:e.nodeId,message:e.message}],warnings};}
 }

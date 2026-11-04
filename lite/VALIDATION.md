@@ -102,3 +102,12 @@ Diese Entscheidungen ermöglichen einen eigenständigen Windows-/Android-Vorfüh
 Added solver regressions for co-/counterflow inlet locations, partial profile endpoints, energy conservation, legacy full-coverage defaults, invalid interval/direction rejection, fitting K losses, edge hydraulic losses, JSON persistence, and reversible/idempotent migration including custom diameters. Ideal gas arrows use turbine exit / chamber inlet states rather than nozzle exhaust states.
 
 Browser verification: desktop 1280×720 and responsive viewport 390×844. Legacy-line conversion, cooling coverage and flow direction, manifold insertion before the jacket, recomputation, and feedline length editing exercised through the UI. Document width at 390 px remained 390 px. No browser error logs observed. Responsive viewport testing is not a physical Android-device test. Partial coverage does not validate uncooled wall regions; manifold and turn are lumped serial loss elements, not a branched or multipass solver.
+
+
+## 2.4 Cooling-Netz — 2026-11-04
+
+98 automatisierte Tests bestanden. Neue Prüfungen: Kühlmantel → Abzweig → Injektor und Preburnerbedarf, Massenabschluss, Kanalenergieresiduum < 0.01 W, separate Kühlversorgung, zwei entgegengesetzt durchströmte nicht überlappende Kühlstrecken mit gemeinsamem Manifold sowie unabhängiger analytischer K-Verlust einer Verengung. Ungültige Engpassgeometrie, Nullbedarf, Schleifen/Zusammenführungen, Gas-Leitungsverluste und falsches Wellenmedium werden abgewiesen.
+
+Browserprüfung bei 1280×720 und 390×844: neue Vorlagen berechnet, Cooling-Section geöffnet, Manifold per Slider verschoben (99.9 % / ε 11.99), gebundene Streckengrenze geprüft. Abzweigleitung zeigt 0.200 kg/s, 581.7 K, erforderliche 25 bar nach Druckabgleich, 36 bar am Knoten und 11 bar zusätzlichen Drosselbedarf. Gesamter Massenabschluss im Beispiel 0 kg/s; Hauptbedarf 4.143 kg/s plus 0.200 kg/s Verbraucher. Kein horizontaler Dokumentüberlauf bei 390 px, keine Browserfehler. SVG-Leitungsauswahl zusätzlich per Tastatur geprüft. Physisches Android-Gerät und neue Windows-EXE wurden für 2.4 nicht geprüft bzw. gebaut.
+
+Die Prüfung belegt Rechen- und Bedienkonsistenz des Bedarfsmodells, keinen experimentell validierten Betriebspunkt. Film und Preburner sind ausschließlich Verbraucherrandbedingungen. Serienprojekte bleiben auf dem bisherigen Solver; verzweigte Projekte verwenden das neue Druckbudgetmodell.

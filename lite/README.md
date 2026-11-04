@@ -1,6 +1,6 @@
-# AstroForge 2.2 Lite
+# AstroForge 2.4 Lite
 
-Ein lokaler Arbeitsraum für den stationären LOX/RP-1-Triebwerksvorentwurf mit grafisch bearbeitbaren Komponenten. Version 2.2 ergänzt eine geometriegekoppelte Kanalkühlung mit Temperaturprofilen, Wärmestromdichte und Druckverlust. Pumpen, Antriebswellen sowie ein separat vorgegebener Treibgaszweig mit Turbine und Abgasdüse bleiben Teil des Arbeitsraums. Komponenten, Leistung und vorläufige Geometrie gehören zum selben Projekt.
+Ein lokaler Arbeitsraum für den stationären LOX/RP-1-Triebwerksvorentwurf mit grafisch bearbeitbaren Komponenten. Version 2.4 ergänzt eine eigene Cooling-Section, getrennte Kühlversorgung, Manifold-Positionierung, verzweigte Leitungen und Verengungen. Teilströme zu Injektor und weiteren Verbrauchern werden als Bedarf vorgegeben; erforderlicher Druckabgleich wird ausgewiesen. Pumpen, Antriebswellen sowie ein separat vorgegebener Treibgaszweig mit Turbine und Abgasdüse bleiben Teil des Arbeitsraums. Komponenten, Leistung und vorläufige Geometrie gehören zum selben Projekt.
 
 Der Quellcode wird im GitHub-Repository geführt. Die aktuelle private [AstroForge-Site](https://astroforge-2-lite.marcusmohren.chatgpt.site) dient zum Testen auf Windows und Android und wird bei abgeschlossenen Weiterentwicklungen mit aktualisiert. Die Anmeldung mit dem berechtigten ChatGPT-Konto ist erforderlich. Den sichtbaren Versionsstand und die Neuerungen findest du im Kopfbereich beziehungsweise unter Hilfe.
 

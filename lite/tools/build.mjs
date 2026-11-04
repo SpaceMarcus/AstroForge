@@ -7,5 +7,5 @@ for(const path of ['index.html','src'])await cp(resolve(root,path),resolve(root,
 await cp(resolve(root,'public'),resolve(root,'dist'),{recursive:true});
 const table=JSON.parse(await readFile(resolve(root,'dist/thermo.json'),'utf8'));
 if(!table)throw Error('Missing thermo data');
-await writeFile(resolve(root,'dist/build-info.json'),JSON.stringify({product:'AstroForge 2.0 Lite',version:'2.3.1',builtAt:new Date().toISOString()}));
+await writeFile(resolve(root,'dist/build-info.json'),JSON.stringify({product:'AstroForge 2.0 Lite',version:'2.4.0',builtAt:new Date().toISOString()}));
 console.log('Built standalone app in lite/dist');
